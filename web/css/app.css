@@ -351,6 +351,11 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 7px; border: 1px sol
 .site-footer a:hover { color: var(--accent); }
 .site-footer svg { width: 15px; height: 15px; }
 
+.asleep-banner { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 55; width: min(640px, calc(100vw - 32px));
+  background: var(--panel); border: 1px solid var(--warn); border-left-width: 4px; border-radius: 10px; box-shadow: var(--shadow); padding: 10px 14px; font-size: 0.9rem; }
+.asleep-banner .hint { color: var(--muted); }
+.asleep-banner:not([hidden]) + .toast { bottom: 130px; }
+
 .busy { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px; z-index: 50; color: #fff; font-weight: 600; }
 .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.35); border-top-color: #fff; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

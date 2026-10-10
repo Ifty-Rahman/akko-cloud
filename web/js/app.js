@@ -140,13 +140,23 @@ async function connect(transport) {
     }
     const kb = new Keyboard(transport, { dongle: transport.dongle, log: logPacket });
     let busyLabel;
+    // Over the receiver the keyboard sleeps after its 2.4 GHz sleep time without
+    // a key press (2 min by default) and only a key press wakes it. Say so for
+    // as long as it lasts, also when no busy overlay is showing.
     kb.onAsleep = (asleep) => {
       const el = $('#busyText');
+      const banner = $('#asleepBanner');
       if (asleep) {
         busyLabel = el.textContent;
-        el.textContent = 'Keyboard not answering — press any key on it. If its green LED keeps blinking, switch it off and on.';
-        if ($('#busy').hidden) toast('Keyboard not answering — press any key on it', true);
-      } else if (busyLabel) el.textContent = busyLabel;
+        const mins = S.sleepRf ? Math.round(S.sleepRf / 60) : 0;
+        const msg = `Your keyboard is asleep${mins ? ` (it sleeps after ${mins} min without a key press)` : ' (it sleeps after a few minutes without a key press)'}. Press any key on it to continue.`;
+        el.textContent = msg;
+        banner.replaceChildren(h('b', {}, 'Waiting for the keyboard. '), msg, h('span', { class: 'hint' }, ' If its green LED keeps blinking instead, switch it off and on.'));
+        banner.hidden = false;
+      } else {
+        if (busyLabel) el.textContent = busyLabel;
+        banner.hidden = true;
+      }
     };
     // Only what the dashboard needs up front; the rest loads in the background.
     const id = await kb.getDeviceId();
@@ -166,7 +176,10 @@ async function connect(transport) {
   if (!kb) return;
   // queued behind the key-map read, so the layout appears first
   S.fw = await kb.getFirmwareVersion().catch(() => undefined);
-  if (S.transport?.dongle) await kb.getLinkStatus().catch(() => undefined);
+  if (S.transport?.dongle) {
+    await kb.getLinkStatus().catch(() => undefined);
+    S.sleepRf = (await kb.getSleepTime().catch(() => undefined))?.rf; // for the "asleep" message
+  }
   if (S.kb === kb) renderDeviceStrip();
 }
 
@@ -960,6 +973,7 @@ async function copyMacroToLibrary(s, mode) {
 // ================================================================== SETTINGS
 async function loadSettings() {
   const [rate, opt, deb, sl] = [await S.kb.getReportRate(), await S.kb.getKeyboardOption(), await S.kb.getDebounce(), await S.kb.getSleepTime()];
+  S.sleepRf = sl.rf;
   S.options = opt;
   const m = S.model;
   const grid = $('#settingsGrid');
@@ -994,7 +1008,9 @@ async function loadSettings() {
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
     h('div', { class: 'sleep-group' }, h('h3', {}, 'Bluetooth'), rows.bt.el, rows.deepBt.el),
     h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Saving sleep timers…', async () => {
-      await S.kb.setSleepTime(Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.get()])));
+      const next = Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.get()]));
+      await S.kb.setSleepTime(next);
+      S.sleepRf = next.rf;
       toast('Sleep timers saved');
     }) }, 'Apply sleep timers')));
 

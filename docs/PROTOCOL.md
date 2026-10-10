@@ -162,7 +162,9 @@ move (followed by `dx, dy`). In the flags byte, bit 7 means "key down" and bits
   200 sleep packets, with 0 mismatches.
 * Checksums, the model-id probe and the report framing come from disassembly of
   the Rust helper (Windows i686 and macOS x86_64 builds).
-* Read-only end-to-end check on real hardware through the bridge: model id,
-  firmware, battery, lighting, logo LED, options, polling rate, debounce, sleep
-  timers, the full key matrix (user remaps decoded correctly) and a stored macro.
-* `tests/` holds unit tests for every packet builder, the receiver handshake and the bridge server.
+* End-to-end checks on a real PC75B Plus+ (USB and 2.4 GHz receiver) using the
+  same `Keyboard` class: model id, firmware, battery, lighting, logo LED, options,
+  polling rate, debounce, sleep timers, the full key matrix (user remaps decoded
+  correctly), a stored macro, and a full 9-page key-matrix write with
+  byte-identical read-back over the receiver.
+* `tests/` holds unit tests for every packet builder and the receiver handshake.

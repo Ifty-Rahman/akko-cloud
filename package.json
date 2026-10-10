@@ -1,0 +1,15 @@
+{
+  "name": "akko-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-based configurator for Akko PC75B keyboards (WebHID).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "for f in web/js/*.js; do node --check \"$f\" || exit 1; done",
+    "dev": "python3 -m http.server 8000 --directory web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

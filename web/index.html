@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>Akko Web Driver</title>
+  <title>Akko Cloud</title>
+  <meta name="description" content="Configure Akko PC75B keyboards in the browser: key remapping, macros, lighting and settings over WebHID.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='8' width='28' height='16' rx='3' fill='%235b8cff'/%3E%3Crect x='6' y='12' width='4' height='3' rx='.6' fill='white'/%3E%3Crect x='12' y='12' width='4' height='3' rx='.6' fill='white'/%3E%3Crect x='18' y='12' width='4' height='3' rx='.6' fill='white'/%3E%3Crect x='9' y='18' width='14' height='3' rx='.6' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -12,7 +13,7 @@
   <header class="topbar">
     <div class="brand">
       <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="3"/><rect class="k" x="6" y="12" width="4" height="3" rx=".6"/><rect class="k" x="12" y="12" width="4" height="3" rx=".6"/><rect class="k" x="18" y="12" width="4" height="3" rx=".6"/><rect class="k" x="9" y="18" width="14" height="3" rx=".6"/></svg>
-      <span>Akko Web Driver</span>
+      <span>Akko Cloud</span>
     </div>
     <div class="device-summary" id="deviceSummary" hidden>
       <span class="dot"></span>
@@ -32,17 +33,10 @@
       <p class="lead">Lighting, key remapping, macros and keyboard settings — straight from the browser. No vendor app required.</p>
       <div class="connect-grid">
         <div class="card">
-          <h2>Keyboard on this device</h2>
-          <p>Plug the keyboard into the computer you are using now (USB cable recommended). Needs Chrome, Edge, Opera or another Chromium browser on desktop.</p>
+          <h2>Connect your keyboard</h2>
+          <p>Plug the keyboard (or its 2.4 GHz receiver) into this computer. Needs Chrome, Edge, Opera or Brave on desktop.</p>
           <button class="primary" id="connectUsbBtn">Connect keyboard</button>
           <p class="hint" id="webhidHint"></p>
-        </div>
-        <div class="card">
-          <h2>Keyboard on the mini PC</h2>
-          <p>Plug the keyboard into the mini PC hosting this page. Works from any browser — phone, tablet or laptop.</p>
-          <button id="refreshBridgeBtn">Find keyboards</button>
-          <ul class="bridge-list" id="bridgeList"></ul>
-          <p class="hint" id="bridgeHint"></p>
         </div>
         <div class="card subtle">
           <h2>Just looking?</h2>

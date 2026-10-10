@@ -106,8 +106,6 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 .connect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 24px; }
 .connect-grid .card { display: flex; flex-direction: column; align-items: flex-start; }
 .connect-grid .card p { color: var(--muted); flex: 1; }
-.bridge-list { list-style: none; margin: 10px 0 0; padding: 0; width: 100%; }
-.bridge-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
 
 .device-strip { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 0.9rem; margin-bottom: 12px; }
 .device-strip b { color: var(--text); font-weight: 600; }

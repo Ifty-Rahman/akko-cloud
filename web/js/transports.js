@@ -1,6 +1,5 @@
 // Transports deliver 64-byte feature reports (report ID 0) to the keyboard.
 //   WebHidTransport  - keyboard plugged into the computer running the browser
-//   BridgeTransport  - keyboard plugged into the mini PC running akko_server.py
 //   DemoTransport    - simulated keyboard for trying the UI without hardware
 
 import { USB_IDS, CONFIG_USAGE_PAGE, CONFIG_USAGE, isDongle } from './models.js';
@@ -72,50 +71,6 @@ export class WebHidTransport {
 
   async receiveFeature() {
     return to64(await this.device.receiveFeatureReport(0));
-  }
-}
-
-const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
-const unhex = (s) => Uint8Array.from(s.match(/../g) ?? [], (h) => parseInt(h, 16));
-
-export class BridgeTransport {
-  static async list(base = '') {
-    const r = await fetch(base + '/api/devices', { headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error('bridge unavailable (' + r.status + ')');
-    return (await r.json()).devices;
-  }
-
-  constructor(info, base = '') {
-    this.info = info;
-    this.base = base;
-    this.vendorId = info.vendorId;
-    this.productId = info.productId;
-    this.name = info.name || 'Keyboard';
-    this.dongle = isDongle(info.vendorId, info.productId);
-    this.kind = 'bridge';
-  }
-
-  async call(method, body) {
-    const r = await fetch(`${this.base}/api/devices/${encodeURIComponent(this.info.id)}/feature`, {
-      method,
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'bridge error ' + r.status);
-    return j;
-  }
-
-  async open() {}
-  async close() {}
-  onDisconnect() {}
-
-  async sendFeature(data64) {
-    await this.call('POST', { data: hex(data64) });
-  }
-
-  async receiveFeature() {
-    return to64(unhex((await this.call('GET')).data));
   }
 }
 

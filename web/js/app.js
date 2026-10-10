@@ -6,7 +6,7 @@ import {
   encodeAction, decodeAction, describeAction, shortLabel, hidName, macroByteLength, rgbToHex, hexToRgb,
 } from './codec.js';
 import { Keyboard } from './protocol.js';
-import { WebHidTransport, BridgeTransport, DemoTransport } from './transports.js';
+import { WebHidTransport, DemoTransport } from './transports.js';
 import { MusicFollower, ScreenFollower } from './host-effects.js';
 
 // ------------------------------------------------------------------ helpers
@@ -96,14 +96,13 @@ $('#themeBtn').addEventListener('click', () => {
 function initConnect() {
   const hint = $('#webhidHint');
   if (!('hid' in navigator)) {
-    hint.textContent = 'This browser has no WebHID. Use desktop Chrome, Edge or Opera — or connect the keyboard to the mini PC.';
+    hint.textContent = 'This browser has no WebHID. Use desktop Chrome, Edge, Opera or Brave. Phones and tablets are not supported.';
     $('#connectUsbBtn').disabled = true;
   } else if (!window.isSecureContext) {
-    hint.innerHTML = '';
-    hint.append('WebHID needs a secure page. Open this site over ', h('b', {}, 'https://'), ' (port 8443 by default) — see the README.');
+    hint.textContent = 'WebHID needs a secure page. Open this site over https:// (or on localhost when developing).';
     $('#connectUsbBtn').disabled = true;
   } else {
-    hint.textContent = 'Pick the keyboard in the browser prompt. Linux clients need the udev rule from the README.';
+    hint.textContent = 'Pick the keyboard in the browser prompt. On Linux, install the udev rule from the project README first.';
   }
   $('#connectUsbBtn').addEventListener('click', async () => {
     try {
@@ -114,28 +113,10 @@ function initConnect() {
     }
   });
   $('#demoBtn').addEventListener('click', () => connect(new DemoTransport(MODELS[0])));
-  $('#refreshBridgeBtn').addEventListener('click', refreshBridge);
-  refreshBridge(true);
   if (WebHidTransport.supported()) {
     WebHidTransport.previouslyGranted().then((t) => {
       if (t) hint.textContent = `Previously allowed: ${t.name}. Click Connect to use it.`;
     }).catch(() => {});
-  }
-}
-
-async function refreshBridge(quiet = false) {
-  const list = $('#bridgeList');
-  const hint = $('#bridgeHint');
-  list.replaceChildren();
-  try {
-    const devs = await BridgeTransport.list();
-    hint.textContent = devs.length ? '' : 'No PC75B found on the mini PC. Plug it in and press "Find keyboards".';
-    for (const d of devs) {
-      list.append(h('li', {}, h('span', {}, `${d.name || 'Keyboard'} `, h('span', { class: 'muted small' }, `${d.id}`)),
-        h('button', { class: 'primary', onclick: () => connect(new BridgeTransport(d)) }, 'Connect')));
-    }
-  } catch {
-    hint.textContent = quiet ? 'Mini PC bridge not detected (page is not served by akko_server.py).' : 'Could not reach the mini PC bridge.';
   }
 }
 
@@ -198,7 +179,7 @@ function showApp() {
   const sel = $('#profileSelect');
   sel.replaceChildren(...Array.from({ length: m.profiles }, (_, i) => h('option', { value: i }, `${i + 1}`)));
   sel.value = String(S.profile);
-  const link = { usb: 'USB (this device)', bridge: 'USB on mini PC', demo: 'Demo (simulated)' }[S.transport.kind];
+  const link = { usb: 'USB (this device)', demo: 'Demo (simulated)' }[S.transport.kind];
   const fw = S.fw !== undefined ? `v${(S.fw >> 8).toString(16)}.${(S.fw & 255).toString(16).padStart(2, '0')}` : '—';
   $('#deviceStrip').replaceChildren(
     h('span', {}, 'Model ', h('b', {}, m.displayName)),
@@ -830,7 +811,7 @@ async function loadSettings() {
         S.loaded.add('settings');
       });
     } }, 'Factory reset'),
-    h('p', { class: 'muted small', style: 'margin-top:12px' }, 'Firmware updates are not supported by this web driver.'));
+    h('p', { class: 'muted small', style: 'margin-top:12px' }, 'Firmware updates are not supported by Akko Cloud.'));
 
   grid.replaceChildren(perf, optCard, sleepCard, maint);
 }
@@ -872,7 +853,7 @@ $('#importFile').addEventListener('change', async (e) => {
   let data;
   try {
     data = JSON.parse(await file.text());
-    if (data.format !== 'akko-web-driver/1') throw new Error('Not an Akko Web Driver backup');
+    if (data.format !== 'akko-web-driver/1') throw new Error('Not an Akko Cloud backup');
   } catch (err) {
     toast(err.message, true);
     return;

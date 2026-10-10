@@ -109,7 +109,7 @@ function initConnect() {
     hint.textContent = 'WebHID needs a secure page. Open this site over https:// (or on localhost when developing).';
     $('#connectUsbBtn').disabled = true;
   } else {
-    hint.textContent = 'Pick the keyboard in the browser prompt. On Linux, install the udev rule from the project README first.';
+    hint.textContent = 'Press any key on the keyboard first (it answers faster right after a key press), then pick it in the browser prompt. On Linux, install the udev rule from the project README first.';
   }
   $('#connectUsbBtn').addEventListener('click', async () => {
     try {
@@ -148,7 +148,18 @@ async function connect(transport) {
     // lights: a PC75B Plus+ went offline ~1 min after the last key press with a
     // 1 min timer, and not at all while charging), or after a radio hiccup. A
     // key press brings it back. Say so for as long as it lasts.
+    // A slow keyboard (power-saving state) speeds up after a key press: say so
+    // while it lasts. The "not answering" message below takes precedence.
+    let asleepNow = false;
+    kb.onSlow = (slow) => {
+      logNote(slow ? 'keyboard answering slowly' : 'keyboard answering at full speed');
+      if (asleepNow) return;
+      const banner = $('#asleepBanner');
+      banner.replaceChildren(h('b', {}, 'Your keyboard is answering slowly. '), 'Press any key on it (Shift is fine) to wake it up and speed this up.');
+      banner.hidden = !slow;
+    };
     kb.onAsleep = (asleep) => {
+      asleepNow = asleep;
       const el = $('#busyText');
       const banner = $('#asleepBanner');
       logNote(asleep ? 'keyboard not answering (waiting for a key press)' : 'keyboard answering again');
@@ -160,7 +171,8 @@ async function connect(transport) {
         banner.hidden = false;
       } else {
         if (busyLabel) el.textContent = busyLabel;
-        banner.hidden = true;
+        banner.hidden = !kb.slow;
+        if (kb.slow) banner.replaceChildren(h('b', {}, 'Your keyboard is answering slowly. '), 'Press any key on it (Shift is fine) to wake it up and speed this up.');
       }
     };
     const id = await kb.getDeviceId();
@@ -248,6 +260,7 @@ async function initialLoad() {
     }
   }
   box.hidden = true;
+  if (!kb.slow) $('#asleepBanner').hidden = true;
   S.initialLoading = false;
   if (S.kb === kb) selectTab(currentTab());
 }

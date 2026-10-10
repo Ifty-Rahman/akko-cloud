@@ -561,3 +561,16 @@ test('2.4 GHz receiver: one slow reply gives one rest, not a rest after every co
     globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
   }
 });
+
+test('2.4 GHz receiver: the app is told when the keyboard answers slowly, and when it is fast again', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const events = [];
+  kb.onSlow = (v) => events.push(v);
+  const send = rx.sendFeature.bind(rx);
+  let slow = true;
+  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f && slow) { slow = false; rx.pending = 18; } }; // power-saving: slow reply
+  await kb.getDeviceId();
+  await kb.getProfile(); // after a key press: quick
+  assert.deepEqual(events, [true, false]);
+});

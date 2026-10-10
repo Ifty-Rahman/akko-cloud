@@ -222,6 +222,16 @@ export class Keyboard {
     return s;
   }
 
+  // Tells the app when the keyboard is answering slowly (or fast again).
+  // Measured on a PC75B Plus+: without recent key presses it drifts into a
+  // power-saving state (replies take seconds, sometimes it stops); right after
+  // a key press every reply came on the first poll (~0.4 s per command).
+  setSlow(slow) {
+    if (this.slow === slow) return;
+    this.slow = slow;
+    this.onSlow?.(slow);
+  }
+
   // [FD] -> AA 55 01 while a keyboard is paired with the receiver.
   async rxLinked() {
     await this.rawSend([RX.IS24]);
@@ -239,6 +249,9 @@ export class Keyboard {
     // polls made while the keyboard is offline don't use up the budget; the
     // offline time itself is bounded by the grace period and ensureAwake
     for (let i = 0; i < RX_MAX_POLLS + RX_SLOW_POLLS; i++) {
+      // past the vendor's 15 quick polls (~1.5 s) the keyboard is in its slow,
+      // power-saving state; a key press on it switches it back to full speed
+      if (i === RX_MAX_POLLS) this.setSlow(true);
       await this.rxPoll(i < RX_MAX_POLLS ? RX_POLL_MS : RX_SLOW_POLL_MS);
       let s = await this.rxStatus();
       if (!s.online) {
@@ -312,6 +325,7 @@ export class Keyboard {
     this.coolDown = r !== 'ok' ? COOL_DOWN_MAX_MS
       : took > SLOW_COMMAND_MS ? Math.min(COOL_DOWN_MAX_MS, Math.max(COOL_DOWN_LONG_MS, 2 * took))
         : this.lastPolls > SLOW_POLLS ? COOL_DOWN_LONG_MS : this.lastPolls > TIRED_POLLS ? COOL_DOWN_MS : 0;
+    if (r === 'ok' && took < SLOW_COMMAND_MS) this.setSlow(false);
     if (r !== 'ok') this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${Date.now() - started} ms`);
     if (r === 'offline') throw new KeyboardAsleepError();
     if (r !== 'ok') throw new Error(expectReply ? NOT_ANSWERED : NOT_CONFIRMED);

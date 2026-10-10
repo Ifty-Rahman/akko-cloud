@@ -87,7 +87,7 @@ export function createMacrosView(d) {
 
   function deleteMacro(id) {
     const m = byId(id);
-    if (!m || !confirm(`Delete “${m.name}” from your library?${slotOf(id) !== undefined ? '\nKeys that already use it keep working on the keyboard.' : ''}`)) return;
+    if (!m || !confirm(`Delete “${m.name}” from your library?${slotInUse(id) !== undefined ? '\nKeys that already use it keep working on the keyboard.' : ''}`)) return;
     V.lib.macros = V.lib.macros.filter((x) => x.id !== id);
     persist();
     if (V.sel === id) {
@@ -212,9 +212,17 @@ export function createMacrosView(d) {
     const s = loadSlotMap(deviceId())[id];
     return s === undefined ? undefined : s;
   }
+  // The slot a macro occupies on the keyboard, but only while a key uses it
+  // (current key map, or any layer read before). A macro removed from its key
+  // stays in the slot map so the slot isn't reused, but is no longer shown as
+  // "On keyboard".
+  function slotInUse(id) {
+    const s = slotOf(id);
+    return s !== undefined && d.slotInUse?.(s) ? s : undefined;
+  }
 
   function macroRow(m) {
-    const slot = S.kb ? slotOf(m.id) : undefined;
+    const slot = S.kb ? slotInUse(m.id) : undefined;
     return h('div', {
       class: `lib-item${m.id === V.sel ? ' active' : ''}`, 'data-macro': m.id, role: 'button', tabindex: 0,
       onclick: (e) => { if (!e.target.closest('.lib-actions')) select(m.id); },
@@ -503,7 +511,7 @@ export function createMacrosView(d) {
     persist();
     render();
     // already on the keyboard? keep it in sync
-    const slot = S.kb ? slotOf(m.id) : undefined;
+    const slot = S.kb ? slotInUse(m.id) : undefined;
     if (slot !== undefined) {
       await busy('Updating the macro on the keyboard…', async () => {
         await d.writeMacroToKeyboard(m, slot);

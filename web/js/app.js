@@ -956,7 +956,7 @@ function modeForSlot(s) {
   return undefined;
 }
 
-const macrosView = createMacrosView({ h, $, toast, busy, S, writeMacroToKeyboard, modeForSlot });
+const macrosView = createMacrosView({ h, $, toast, busy, S, writeMacroToKeyboard, modeForSlot, slotInUse: (s) => slotsUsedByKeys().has(s) });
 
 const libMacro = (id) => macrosView.library().macros.find((m) => m.id === id);
 const pendingIdForSlot = (s) => S.pendingMacros.get(s);

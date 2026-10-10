@@ -140,15 +140,17 @@ async function connect(transport) {
     }
     const kb = new Keyboard(transport, { dongle: transport.dongle, log: logPacket });
     let busyLabel;
-    // Over the receiver the keyboard sometimes stops answering (asleep, or a
-    // radio hiccup); a key press usually brings it back. Say so for as long as
-    // it lasts, also when no busy overlay is showing.
+    // Over the receiver the keyboard stops answering when, on battery, its
+    // lights-off timer runs out (the firmware turns the link off with the
+    // lights: a PC75B Plus+ went offline ~1 min after the last key press with a
+    // 1 min timer, and not at all while charging), or after a radio hiccup. A
+    // key press brings it back. Say so for as long as it lasts.
     kb.onAsleep = (asleep) => {
       const el = $('#busyText');
       const banner = $('#asleepBanner');
       if (asleep) {
         busyLabel = el.textContent;
-        const msg = 'Your keyboard isn’t answering. Press any key on it to continue.';
+        const msg = 'Your keyboard isn’t answering. Press any key on it to continue. (On battery it stops answering once its lights go off.)';
         el.textContent = msg;
         banner.replaceChildren(h('b', {}, 'Waiting for the keyboard. '), msg, h('span', { class: 'hint' }, ' If its green LED keeps blinking instead, switch it off and on.'));
         banner.hidden = false;
@@ -1061,7 +1063,7 @@ async function loadSettings() {
     deepBt: sleepRow('Sleep after', SLEEP, sl.deepBt, m.sleep.minDeep, m.sleep.maxDeep),
   };
   const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless power saving'),
-    h('p', { class: 'muted small' }, 'Both timers count from your last key press. Any key brings the lights back and wakes the keyboard.'),
+    h('p', { class: 'muted small' }, 'Both timers count from your last key press, and any key brings the keyboard back. On battery, once the lights go off the keyboard also stops answering this app over the 2.4 GHz receiver until you press a key. While it charges, the lights stay on.'),
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
     h('div', { class: 'sleep-group' }, h('h3', {}, 'Bluetooth'), rows.bt.el, rows.deepBt.el),
     h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Saving sleep timers…', async () => {

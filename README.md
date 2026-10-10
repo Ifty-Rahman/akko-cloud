@@ -38,8 +38,9 @@ sudo cp linux/70-akko-keyboard.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-**2.4 GHz receiver:** changes take a little longer than over the cable. If the keyboard stops
-answering (for example when it has gone to sleep), the site asks you to press any key on it.
+**2.4 GHz receiver:** changes take a little longer than over the cable. On battery, once the
+keyboard's lights go off (after 2 minutes without a key press by default) it also stops answering the
+receiver until you press a key. The site tells you when that happens.
 
 ## Features
 

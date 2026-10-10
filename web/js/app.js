@@ -386,14 +386,31 @@ function slotName(idx) {
 
 // ---- key map loading: draw instantly, then read the real map in the background
 const layerIndex = () => (S.layer === 'base' ? S.profile : Number(S.layer.slice(2)));
-const cacheKey = () => `akko-matrix:${S.id & 0x7fffffff}:${S.layer}:${layerIndex()}`;
-function cachedMatrix() {
+// Saved copies of key maps, one per keyboard, layer and profile. Like the
+// vendor app (devToInfo), a saved copy is trusted, so the key map is read from
+// the keyboard only the first time or on Reload: 8 of the 16 queries of a
+// load over the 2.4 GHz receiver. ("-v2": copies saved by earlier versions
+// could contain misread pages, so they are dropped once.)
+const MAP_CACHE = 'akko-map-v2';
+const cacheKey = () => `${MAP_CACHE}:${S.id & 0x7fffffff}:${S.layer}:${layerIndex()}`;
+function savedMatrix() {
   try {
     const v = localStorage.getItem(cacheKey());
     if (v && v.length === 1024) return Uint8Array.from(v.match(/../g), (x) => parseInt(x, 16));
   } catch { /* storage unavailable */ }
-  return isFnLayer() ? new Uint8Array(512) : Uint8Array.from(S.model.matrix);
+  return undefined;
 }
+function cachedMatrix() {
+  return savedMatrix() ?? (isFnLayer() ? new Uint8Array(512) : Uint8Array.from(S.model.matrix));
+}
+// after a factory reset or a restore the saved copies no longer match the keyboard
+function forgetSavedMatrices() {
+  try {
+    const prefix = `${MAP_CACHE}:${S.id & 0x7fffffff}:`;
+    for (const k of Object.keys(localStorage)) if (k.startsWith(prefix)) localStorage.removeItem(k);
+  } catch { /* ignore */ }
+}
+try { for (const k of Object.keys(localStorage)) if (k.startsWith('akko-matrix:')) localStorage.removeItem(k); } catch { /* ignore */ }
 function storeMatrix(m) {
   try { localStorage.setItem(cacheKey(), fmtHex(m).replaceAll(' ', '')); } catch { /* ignore */ }
 }
@@ -420,8 +437,20 @@ async function loadKeys() {
 // background (~3 s over the 2.4 GHz receiver). Edits made meanwhile are kept on
 // top of what the keyboard reports. Writing waits until the read confirmed
 // the map, so a stale cache can never be written back.
-async function readLayer() {
+async function readLayer({ force = false } = {}) {
   const token = (S.keysToken = (S.keysToken ?? 0) + 1);
+  const saved = force ? undefined : savedMatrix();
+  if (saved) {
+    S.orig = Uint8Array.from(saved);
+    S.work = Uint8Array.from(saved);
+    S.keysVerified = true;
+    S.pendingMacros.clear();
+    setKeysLoading('saved');
+    syncMacroModes();
+    renderKeys();
+    renderEditor();
+    return;
+  }
   const base = cachedMatrix();
   S.orig = Uint8Array.from(base);
   S.work = Uint8Array.from(base);
@@ -465,7 +494,12 @@ function setKeysLoading(state, err) {
   const note = $('#keysLoading');
   note.hidden = !state;
   note.classList.toggle('err', state === 'error');
-  if (state === 'loading') {
+  note.classList.toggle('saved', state === 'saved');
+  if (state === 'saved') {
+    note.hidden = false;
+    note.replaceChildren('Key map from the copy saved in this browser. Changed keys outside Akko Cloud? ',
+      h('button', { type: 'button', class: 'linkish', onclick: () => { if (!isDirty() || confirm('Discard unsaved key changes and read the layer again?')) readLayer({ force: true }).catch(() => {}); } }, 'Read it from the keyboard'));
+  } else if (state === 'loading') {
     note.replaceChildren(h('span', { class: 'spinner small' }), 'Checking your layout with the keyboard… You can already pick keys and make changes.');
   } else if (state === 'error') {
     note.replaceChildren(`Couldn’t read the key map from the keyboard${err?.message ? ` (${err.message.replace(/\.$/, '')})` : ''}. Your changes are kept; writing is paused until the map has been read.`,
@@ -761,7 +795,7 @@ $('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', as
 }));
 $('#keysReloadBtn').addEventListener('click', () => {
   if (isDirty() && !confirm('Discard unsaved key changes and read the layer again?')) return;
-  readLayer().catch(() => {});
+  readLayer({ force: true }).catch(() => {});
 });
 $('#keysDefaultsBtn').addEventListener('click', () => {
   S.work = isFnLayer() ? new Uint8Array(512) : Uint8Array.from(S.model.matrix);
@@ -1003,7 +1037,7 @@ function slotsUsedByKeys() {
   const scan = (m) => { for (let i = 0; i < 128; i++) if (m[i * 4] === 9) used.add(m[i * 4 + 2]); };
   if (S.work) scan(S.work);
   try {
-    const prefix = `akko-matrix:${deviceKey()}:`;
+    const prefix = `${MAP_CACHE}:${deviceKey()}:`;
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       const v = k?.startsWith(prefix) ? localStorage.getItem(k) : null;
@@ -1126,6 +1160,7 @@ async function loadSettings() {
       if (!confirm('Reset the keyboard to factory defaults? This cannot be undone.')) return;
       await busy('Resetting…', async () => {
         await S.kb.factoryReset();
+        forgetSavedMatrices();
         S.loaded.clear();
         saveSlotMap(deviceKey(), {}); // the keyboard's macro slots are empty now
         toast('Keyboard reset to factory defaults');
@@ -1187,6 +1222,7 @@ $('#importFile').addEventListener('change', async (e) => {
   const unhex = (s) => Uint8Array.from(s.match(/../g), (x) => parseInt(x, 16));
   await busy('Restoring backup…', async () => {
     const kb = S.kb;
+    forgetSavedMatrices();
     for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrixVerified(unhex(data.profiles[p].matrix), p);
     for (let f = 0; f < Math.min(data.fn.length, S.model.fnLayers); f++) await kb.setFnMatrixVerified(unhex(data.fn[f]), f);
     if (!kb.dongle) for (const [i, m] of Object.entries(data.macros)) await kb.setMacroVerified(Number(i), m.events, m.repeatCount || 1);

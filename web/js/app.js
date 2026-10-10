@@ -249,8 +249,9 @@ function selectTab(name) {
     macrosView.render(); // the library is local: nothing to read from the keyboard
     return;
   }
-  if (name === 'keys' && S.loaded.has('keys') && syncMacroModes()) {
-    renderKeys();
+  if (name === 'keys' && S.loaded.has('keys') && !S.keysLoading) {
+    syncMacroModes();
+    renderKeys(); // macro names may have changed on the Macros tab
     renderEditor();
   }
   loadTab(name);
@@ -844,7 +845,15 @@ async function writeMacroToKeyboard(m, slotIndex) {
   await S.kb.setMacroVerified(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
 }
 
-const macrosView = createMacrosView({ h, $, toast, busy, S, writeMacroToKeyboard });
+// Play mode of a keyboard slot, from a key that uses it in the current layer.
+function modeForSlot(s) {
+  for (let i = 0; S.work && i < 128; i++) {
+    if (S.work[i * 4] === 9 && S.work[i * 4 + 2] === s) return MACRO_MODES.find((m) => m.code === S.work[i * 4 + 1])?.id;
+  }
+  return undefined;
+}
+
+const macrosView = createMacrosView({ h, $, toast, busy, S, writeMacroToKeyboard, modeForSlot });
 
 const libMacro = (id) => macrosView.library().macros.find((m) => m.id === id);
 const pendingIdForSlot = (s) => S.pendingMacros.get(s);

@@ -4,6 +4,7 @@
 
 import { USB_IDS, CONFIG_USAGE_PAGE, CONFIG_USAGE, isDongle } from './models.js';
 import { CMD, REPORT_LEN } from './protocol.js';
+import { encodeMacro } from './codec.js';
 
 const to64 = (view) => {
   const u8 = view instanceof DataView ? new Uint8Array(view.buffer, view.byteOffset, view.byteLength) : Uint8Array.from(view);
@@ -87,6 +88,12 @@ export class DemoTransport {
     this.matrices = [0, 1, 2, 3].map(() => Uint8Array.from(model.matrix));
     this.fn = [0, 1].map(() => new Uint8Array(512));
     this.macros = new Map();
+    // like a keyboard that already has a macro: slot 1 types "Hi", on F8 of profile 1
+    const k = (hid, action) => ({ type: 'keyboard', action, value: hid });
+    const wait = (ms) => ({ type: 'delay', value: ms });
+    this.macros.set(0, Uint8Array.from([...encodeMacro([k(225, 'down'), wait(20), k(11, 'down'), wait(30), k(11, 'up'), wait(10), k(225, 'up'), wait(40),
+      k(12, 'down'), wait(30), k(12, 'up'), wait(50)], 1), ...new Uint8Array(24)]));
+    this.matrices[0].set([9, 0, 0, 0], 48 * 4);
     this.pic = new Uint8Array(384);
     this.led = [CMD.GET_LEDPARAM, 4, 2, 4, 8, 255, 0, 0];
     this.sled = [CMD.GET_SLEDPARAM, 1, 2, 4, 7, 0, 128, 255];

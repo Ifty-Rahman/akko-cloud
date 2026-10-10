@@ -226,7 +226,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 .lib-item.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .lib-item.active .lib-name { color: var(--accent); font-weight: 600; }
 .lib-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lib-slot, .lib-count { font-size: 0.75rem; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 99px; padding: 0 7px; }
+.lib-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; padding: 4px 0; }
+.lib-sub { font-size: 0.74rem; color: var(--muted); font-weight: 400; }
+.lib-item.active .lib-sub { color: color-mix(in srgb, var(--accent) 75%, var(--muted)); }
+.lib-count { font-size: 0.75rem; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 99px; padding: 0 7px; }
 .lib-actions { display: inline-flex; gap: 0; opacity: 0; transition: opacity 0.12s; }
 .lib-item:hover .lib-actions, .lib-item:focus-within .lib-actions, .lib-item.active .lib-actions { opacity: 1; }
 @media (hover: none) { .lib-actions { opacity: 1; } }
@@ -241,6 +244,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 .lib-empty { color: var(--muted); font-size: 0.85rem; margin: 6px 10px; }
 .lib-empty.big { margin: 24px 10px; text-align: center; }
 .lib-rename { width: 100%; min-height: 34px; margin: 2px 0; }
+.lib-scan { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; margin: 4px 6px 6px; }
 .lib-foot { color: var(--muted); font-size: 0.8rem; margin: 8px 4px 0; padding-top: 8px; border-top: 1px solid var(--line); }
 
 .macro-edit { display: flex; flex-direction: column; gap: 12px; }

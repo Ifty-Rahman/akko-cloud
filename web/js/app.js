@@ -784,13 +784,15 @@ const headIsEmpty = (page) => page.slice(2).every((b) => b === 0);
 
 async function scanMacroSlots() {
   if (S.macroScanned || S.macroScanning || !S.kb) return;
+  // Over the 2.4 GHz receiver a run of macro reads was seen to drop the link,
+  // so only scan over USB; on the receiver the remembered status is shown.
+  if (S.kb.dongle) return;
   S.macroScanning = true;
   const kb = S.kb;
   try {
     for (let i = 0; i < S.model.maxMacros; i++) {
       if (S.kb !== kb) return;
       if (S.macroCache.has(i)) continue; // already read in full
-      if (kb.dongle) await new Promise((r) => setTimeout(r, 250)); // be gentle with the 2.4 GHz link
       const page = await kb.getMacroHead(i);
       setMacroStatus(i, !headIsEmpty(page));
       if (currentTab() === 'macros') renderMacroSlots();

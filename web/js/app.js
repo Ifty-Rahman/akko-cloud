@@ -2,8 +2,8 @@ import {
   LAYOUT, KNOB, MAIN_LIGHT_TYPES, LOGO_LIGHT_TYPES, LIGHT_NAMES, MODELS, findModel,
 } from './models.js';
 import {
-  HID_NAMES, CODE_TO_HID, FUNCTION_ACTIONS, MOUSE_ACTIONS, MACRO_MODES, MACRO_LIMIT,
-  encodeAction, decodeAction, describeAction, hidName, macroByteLength, rgbToHex, hexToRgb,
+  HID_NAMES, CODE_TO_HID, FUNCTION_ACTIONS, MOUSE_ACTIONS, MACRO_MODES,
+  encodeAction, decodeAction, describeAction, rgbToHex, hexToRgb,
 } from './codec.js';
 import { Keyboard, VENDOR_COLOUR_CODES } from './protocol.js';
 import { WebHidTransport, DemoTransport } from './transports.js';
@@ -12,6 +12,10 @@ import { KEYBINDING_SECTIONS } from './keybindings.js';
 import { keycap, renderCap } from './keycap.js';
 import { icon } from './icons.js';
 import { AKKO_MODEL_NAMES } from './akko-names.js';
+import { createMacrosView } from './macros-view.js';
+import {
+  MODES as MACRO_PLAY_MODES, loadSlotMap, saveSlotMap, allocateSlot, macroIdForSlot, validateMacro, finalizeMacro,
+} from './macro-library.js';
 
 // ------------------------------------------------------------------ helpers
 const $ = (s, root = document) => root.querySelector(s);
@@ -73,9 +77,7 @@ const S = {
   logo: undefined,
   options: undefined,
   pic: new Uint8Array(384),
-  macroIndex: 0,
-  macro: { events: [], repeatCount: 1 },
-  macroCache: new Map(),
+  pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
   logging: false,
   logLines: [],
@@ -151,7 +153,7 @@ async function connect(transport) {
     const profile = await kb.getProfile().catch(() => 0);
     Object.assign(S, {
       kb, transport, id, fw: undefined, profile, model: findModel(id), layer: 'base', selected: undefined,
-      loaded: new Set(), macroCache: new Map(), macroStatus: undefined, macroScanned: false, macroScanning: false,
+      loaded: new Set(), pendingMacros: new Map(),
     });
     kb.colourCodes = S.model.colourCodes ?? VENDOR_COLOUR_CODES;
     transport.onDisconnect(() => {
@@ -242,6 +244,15 @@ $$('#tabs button').forEach((b) => b.addEventListener('click', () => selectTab(b.
 function selectTab(name) {
   $$('#tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
   $$('.tab-panel').forEach((p) => (p.hidden = p.dataset.panel !== name));
+  if (name !== 'macros') macrosView.stop();
+  if (name === 'macros') {
+    macrosView.render(); // the library is local: nothing to read from the keyboard
+    return;
+  }
+  if (name === 'keys' && S.loaded.has('keys') && syncMacroModes()) {
+    renderKeys();
+    renderEditor();
+  }
   loadTab(name);
 }
 async function loadTab(name) {
@@ -253,7 +264,7 @@ async function loadTab(name) {
     try { await loadKeys(); } catch (e) { S.loaded.delete('keys'); toast(e?.message || String(e), true); }
     return;
   }
-  const loaders = { keys: loadKeys, lighting: loadLighting, macros: loadMacros, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
+  const loaders = { keys: loadKeys, lighting: loadLighting, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
   const ok = await busy('Reading from keyboard…', async () => {
     await loaders[name]();
     return true;
@@ -318,7 +329,10 @@ async function readLayer() {
     if (token !== S.keysToken) return; // a newer load replaced this one
     S.orig = Uint8Array.from(m);
     S.work = Uint8Array.from(m);
+    S.pendingMacros.clear();
     storeMatrix(m);
+    if (token === S.keysToken) S.keysLoading = false;
+    syncMacroModes();
   } finally {
     if (token === S.keysToken) {
       setKeysLoading(false);
@@ -341,14 +355,17 @@ function updateDirty() {
   $('#keysWriteBtn').disabled = !d;
 }
 
-const capFor = (idx) => keycap(slot(S.work, idx), { fnLayer: isFnLayer() });
+const capFor = (idx) => keycap(slot(S.work, idx), { fnLayer: isFnLayer(), macroName: macroLabel });
+function actionText(a) {
+  return a.type === 'macro' ? `Macro: ${macroLabel(a.index)}` : describeAction(a);
+}
 
 function keyButton(idx, attrs, cap) {
   const changed = !eqBytes(slot(S.work, idx), slot(S.orig, idx));
   const el = h('button', {
     ...attrs,
     class: [attrs.class, changed && 'changed', S.selected === idx && 'selected', cap.special && 'special'].filter(Boolean).join(' '),
-    'aria-label': `${slotName(idx)}: ${isFnLayer() && !cap.special && !cap.text ? 'built-in Fn function' : describeAction(decodeAction(slot(S.work, idx)))}`,
+    'aria-label': `${slotName(idx)}: ${isFnLayer() && !cap.special && !cap.text ? 'built-in Fn function' : actionText(decodeAction(slot(S.work, idx)))}`,
     'data-idx': idx,
     onclick: (e) => !S.keysLoading && selectKey(idx, e.currentTarget),
   });
@@ -366,7 +383,7 @@ function renderKeys() {
     const cap = capFor(idx);
     const b = keyButton(idx, { class: 'knob-action' }, cap);
     b.prepend(h('span', { class: 'knob-what' }, h('span', { class: 'knob-dir', innerHTML: icon(iconName) }), label));
-    b.append(h('span', { class: 'knob-desc' }, isFnLayer() && !cap.special && !cap.text ? 'Built-in' : describeAction(decodeAction(slot(S.work, idx)))));
+    b.append(h('span', { class: 'knob-desc' }, isFnLayer() && !cap.special && !cap.text ? 'Built-in' : actionText(decodeAction(slot(S.work, idx)))));
     return b;
   };
   $('#knobPanel').replaceChildren(
@@ -497,14 +514,48 @@ function renderEditor() {
       body.append(h('label', { class: 'field' }, h('span', {}, 'Mouse action'), sel));
       read = () => ({ type: 'mouse', bytes: MOUSE_ACTIONS[Number(sel.value)].bytes });
     } else if (t === 'macro') {
-      loadMacroStatus();
-      const label = (i) => { const st = S.macroStatus.get(i); return `Macro ${i + 1}${st === 'saved' ? ' — saved' : st === 'empty' ? ' — empty' : ''}`; };
-      const sl = h('select', {}, range(0, S.model.maxMacros - 1).map((i) => h('option', { value: i, selected: cur.index === i }, label(i))));
-      if (!S.macroScanned) scanMacroSlots().then(() => { if (sl.isConnected) [...sl.options].forEach((o) => (o.textContent = label(Number(o.value)))); });
+      const lib = [...macrosView.library().macros].sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
+      const curSlot = cur.type === 'macro' ? cur.index : undefined;
+      const curId = curSlot !== undefined ? macroIdOnSlot(curSlot) : undefined;
+      const onKeyboardOnly = curSlot !== undefined && !libMacro(curId);
+      if (!lib.length && !onKeyboardOnly) {
+        body.append(h('div', { class: 'field' }, h('p', { class: 'muted', style: 'margin:0' }, 'You have no macros yet. Record one on the Macros tab, then come back to assign it.'),
+          h('div', {}, h('button', { type: 'button', onclick: () => selectTab('macros') }, 'Open Macros'))));
+        read = () => { throw new Error('Create a macro on the Macros tab first.'); };
+        return;
+      }
+      const sel = h('select', {},
+        onKeyboardOnly ? h('option', { value: `slot:${curSlot}`, selected: true }, macroLabel(curSlot)) : null,
+        lib.map((m) => h('option', { value: `lib:${m.id}`, selected: m.id === curId }, m.name)));
       const md = h('select', {}, MACRO_MODES.map((m) => h('option', { value: m.id, selected: cur.mode === m.id }, m.label)));
-      body.append(h('label', { class: 'field' }, h('span', {}, 'Macro slot'), sl), h('label', { class: 'field' }, h('span', {}, 'Playback'), md),
-        h('p', { class: 'muted small' }, 'Edit the macro contents on the Macros tab.'));
-      read = () => ({ type: 'macro', index: Number(sl.value), mode: md.value });
+      const mdField = h('label', { class: 'field' }, h('span', {}, 'Playback'), md);
+      const info = h('div', { class: 'field macro-pick-info' });
+      const update = () => {
+        const v = sel.value;
+        mdField.hidden = !v.startsWith('slot:');
+        if (v.startsWith('slot:')) {
+          info.replaceChildren(h('p', { class: 'muted small', style: 'margin:0' }, 'This macro is on the keyboard but not in your library.'),
+            h('div', {}, h('button', { type: 'button', onclick: () => copyMacroToLibrary(curSlot, md.value) }, 'Copy it into the library to edit it')));
+          return;
+        }
+        const m = libMacro(v.slice(4));
+        const mode = MACRO_PLAY_MODES.find((x) => x.id === m.mode);
+        const err = validateMacro(m.events);
+        info.replaceChildren(h('p', { class: `small ${err ? 'err' : 'muted'}`, style: 'margin:0' },
+          err ? `Not ready: ${err}` : `Plays: ${mode.label.toLowerCase()}${m.mode === 'repeat_times' ? ` ×${m.repeat}` : ''} — ${mode.hint}`),
+          h('p', { class: 'muted small', style: 'margin:0' }, 'Change the steps or how it plays on the ', h('a', { href: '#', 'data-goto': 'macros', onclick: (e) => e.preventDefault() }, 'Macros tab'), '.'));
+      };
+      sel.addEventListener('change', update);
+      update();
+      body.append(h('label', { class: 'field' }, h('span', {}, 'Macro'), sel), mdField, info);
+      read = () => {
+        const v = sel.value;
+        if (v.startsWith('slot:')) return { type: 'macro', index: Number(v.slice(5)), mode: md.value };
+        const m = libMacro(v.slice(4));
+        const err = validateMacro(m.events);
+        if (err) throw new Error(`“${m.name}” can’t be used yet: ${err}`);
+        return { type: 'macro', index: slotForMacro(m), mode: m.mode };
+      };
     } else if (t === 'disabled') {
       body.append(h('p', { class: 'muted' }, isFnLayer() ? 'The key keeps the keyboard’s built-in Fn behaviour (see the Shortcuts tab).' : 'The key will do nothing.'));
       read = () => ({ type: 'disabled' });
@@ -535,7 +586,7 @@ function renderEditor() {
   };
   ed.replaceChildren(
     h('div', { class: 'editor-head' }, h('h2', {}, slotName(idx)),
-      h('span', { class: 'now' }, 'currently: ', h('b', {}, fnDefault ? 'built-in Fn function' : describeAction(cur)))),
+      h('span', { class: 'now' }, 'currently: ', h('b', {}, fnDefault ? 'built-in Fn function' : actionText(cur)))),
     h('div', { class: 'grid' }, h('label', { class: 'field' }, h('span', {}, 'Action type'), typeSel)),
     h('div', { style: 'height:12px' }),
     body,
@@ -547,9 +598,25 @@ function renderEditor() {
 }
 
 $('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', async () => {
-  if (S.layer === 'base') await S.kb.setKeyMatrix(S.work, S.profile);
-  else await S.kb.setFnMatrix(S.work, Number(S.layer.slice(2)));
+  // macros first, so a key never points at a slot that is not written yet
+  const used = new Set();
+  for (let i = 0; i < 128; i++) if (S.work[i * 4] === 9) used.add(S.work[i * 4 + 2]);
+  for (const [s, id] of S.pendingMacros) {
+    const m = libMacro(id);
+    if (!m || !used.has(s)) continue;
+    $('#busyText').textContent = `Writing macro “${m.name}”…`;
+    await writeMacroToKeyboard(m, s);
+    const map = slotMap();
+    for (const k of Object.keys(map)) if (map[k] === s && k !== id) delete map[k];
+    map[id] = s;
+    saveSlotMap(deviceKey(), map);
+    S.pendingMacros.delete(s);
+  }
+  $('#busyText').textContent = 'Writing key map…';
+  if (S.layer === 'base') await S.kb.setKeyMatrixVerified(S.work, S.profile);
+  else await S.kb.setFnMatrixVerified(S.work, layerIndex());
   S.orig = Uint8Array.from(S.work);
+  storeMatrix(S.work);
   renderKeys();
   toast('Key map saved to keyboard');
 }));
@@ -753,176 +820,87 @@ $('#picWriteBtn').addEventListener('click', () => busy('Writing per-key colours�
 }));
 
 // ================================================================== MACROS
-async function loadMacros() {
-  loadMacroStatus();
-  renderMacroSlots();
-  await openMacro(S.macroIndex);
-  scanMacroSlots(); // background: fills in saved/empty for the other slots
+// Macros live in a library in this browser, like the vendor driver's local
+// macro files. A macro goes onto the keyboard when a key that uses it is
+// written; the keyboard slot is picked automatically (see macro-library.js).
+const deviceKey = () => S.id & 0x7fffffff;
+const slotMap = () => loadSlotMap(deviceKey());
+
+async function writeMacroToKeyboard(m, slotIndex) {
+  const err = validateMacro(m.events);
+  if (err) throw new Error(`“${m.name}”: ${err}`);
+  await S.kb.setMacro(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
 }
 
-// ---- which slots hold a macro (shown on the Macros tab and in the Keys editor)
-const macroStatusKey = () => `akko-macros:${S.id & 0x7fffffff}`;
-function loadMacroStatus() {
-  if (S.macroStatus) return;
-  S.macroStatus = new Map();
+const macrosView = createMacrosView({ h, $, toast, busy, S, writeMacroToKeyboard });
+
+const libMacro = (id) => macrosView.library().macros.find((m) => m.id === id);
+const pendingIdForSlot = (s) => S.pendingMacros.get(s);
+function macroIdOnSlot(s) {
+  return pendingIdForSlot(s) ?? macroIdForSlot(slotMap(), s);
+}
+function macroLabel(s) {
+  return libMacro(macroIdOnSlot(s))?.name ?? `Macro #${s + 1} (on the keyboard)`;
+}
+
+// Keyboard slots used by any key we know of: this layer's working copy plus
+// the cached key maps of every profile and Fn layer.
+function slotsUsedByKeys() {
+  const used = new Set();
+  const scan = (m) => { for (let i = 0; i < 128; i++) if (m[i * 4] === 9) used.add(m[i * 4 + 2]); };
+  if (S.work) scan(S.work);
   try {
-    const saved = JSON.parse(localStorage.getItem(macroStatusKey()) || '{}');
-    for (const [k, v] of Object.entries(saved)) S.macroStatus.set(Number(k), v);
-  } catch { /* ignore */ }
-}
-function setMacroStatus(i, saved) {
-  loadMacroStatus();
-  S.macroStatus.set(i, saved ? 'saved' : 'empty');
-  try { localStorage.setItem(macroStatusKey(), JSON.stringify(Object.fromEntries(S.macroStatus))); } catch { /* ignore */ }
-}
-function forgetMacroStatus() {
-  S.macroStatus = undefined;
-  S.macroScanned = false;
-  try { localStorage.removeItem(macroStatusKey()); } catch { /* ignore */ }
-}
-const headIsEmpty = (page) => page.slice(2).every((b) => b === 0);
-
-async function scanMacroSlots() {
-  if (S.macroScanned || S.macroScanning || !S.kb) return;
-  // Over the 2.4 GHz receiver a run of macro reads was seen to drop the link,
-  // so only scan over USB; on the receiver the remembered status is shown.
-  if (S.kb.dongle) return;
-  S.macroScanning = true;
-  const kb = S.kb;
-  try {
-    for (let i = 0; i < S.model.maxMacros; i++) {
-      if (S.kb !== kb) return;
-      if (S.macroCache.has(i)) continue; // already read in full
-      const page = await kb.getMacroHead(i);
-      setMacroStatus(i, !headIsEmpty(page));
-      if (currentTab() === 'macros') renderMacroSlots();
+    const prefix = `akko-matrix:${deviceKey()}:`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const v = k?.startsWith(prefix) ? localStorage.getItem(k) : null;
+      if (v?.length === 1024) scan(Uint8Array.from(v.match(/../g), (x) => parseInt(x, 16)));
     }
-    S.macroScanned = true;
-  } catch {
-    /* stop quietly; slots already checked keep their state */
-  } finally {
-    S.macroScanning = false;
-  }
+  } catch { /* storage unavailable */ }
+  return used;
 }
 
-function renderMacroSlots() {
-  const ul = $('#macroSlotList');
-  const top = ul.scrollTop;
-  ul.replaceChildren(...range(0, S.model.maxMacros - 1).map((i) => {
-    const st = S.macroStatus?.get(i);
-    const badge = st === 'saved' ? h('span', { class: 'state saved' }, 'saved') : st === 'empty' ? h('span', { class: 'state' }, 'empty') : h('span', { class: 'state' }, '');
-    return h('li', {}, h('button', { class: i === S.macroIndex ? 'active' : '', onclick: () => busy('Reading macro…', () => openMacro(i)) },
-      h('span', {}, `Macro ${i + 1}`), badge));
-  }));
-  ul.scrollTop = top;
+// Picks (or reuses) the keyboard slot for a library macro assigned to a key.
+function slotForMacro(m) {
+  for (const [s, id] of S.pendingMacros) if (id === m.id) return s;
+  const map = slotMap();
+  for (const [s, id] of S.pendingMacros) map[id] = s;
+  const s = allocateSlot(map, m.id, slotsUsedByKeys(), S.model.maxMacros);
+  S.pendingMacros.set(s, m.id); // (re)written with the key map
+  return s;
 }
 
-async function openMacro(i) {
-  S.macroIndex = i;
-  if (!S.macroCache.has(i)) S.macroCache.set(i, await S.kb.getMacro(i));
-  const m = S.macroCache.get(i);
-  setMacroStatus(i, m.events.length > 0);
-  S.macro = { events: m.events.map((e) => ({ ...e })), repeatCount: Math.max(1, m.repeatCount || 1) };
-  renderMacroSlots();
-  renderMacroEditor();
-}
-
-let recorder;
-function renderMacroEditor() {
-  const ed = $('#macroEditor');
-  const m = S.macro;
-  let used = 0;
-  try { used = macroByteLength(m.events); } catch { used = Infinity; }
-  const full = used > MACRO_LIMIT;
-  const prevList = ed.querySelector('.events');
-  const keepScroll = prevList ? prevList.scrollTop : 0;
-  const list = h('ul', { class: 'events scroll-gutter' }, m.events.map((ev, i) => {
-    const del = h('button', { class: 'ghost', title: 'Remove', onclick: () => { m.events.splice(i, 1); renderMacroEditor(); } }, '✕');
-    const up = h('button', { class: 'ghost', title: 'Move up', disabled: i === 0, onclick: () => { [m.events[i - 1], m.events[i]] = [m.events[i], m.events[i - 1]]; renderMacroEditor(); } }, '↑');
-    if (ev.type === 'delay') {
-      return h('li', {}, h('span', { class: 'tag delay' }, 'wait'),
-        h('input', { type: 'number', min: 1, max: 65535, value: ev.value, onchange: (e) => { ev.value = Math.max(1, Math.min(65535, Number(e.target.value) || 1)); renderMacroEditor(); } }),
-        h('span', { class: 'grow muted' }, 'ms'), up, del);
+// The play mode is part of the key's action bytes. When a macro's mode was
+// changed on the Macros tab, stage the new mode on keys that use it.
+function syncMacroModes() {
+  if (!S.work || S.keysLoading) return false;
+  let changed = 0;
+  for (let i = 0; i < 128; i++) {
+    if (S.work[i * 4] !== 9) continue;
+    const m = libMacro(macroIdOnSlot(S.work[i * 4 + 2]));
+    const code = m && MACRO_MODES.find((x) => x.id === m.mode)?.code;
+    if (code !== undefined && S.work[i * 4 + 1] !== code) {
+      S.work[i * 4 + 1] = code;
+      changed++;
     }
-    const name = ev.type === 'keyboard' ? hidName(ev.value)
-      : ev.type === 'mouse_button' ? (MOUSE_ACTIONS.find((x) => x.code === ev.value)?.label ?? `Mouse ${ev.value}`)
-      : `Mouse move ${ev.dx}, ${ev.dy}`;
-    return h('li', {}, h('span', { class: `tag ${ev.action === 'up' ? 'up' : ''}` }, ev.action ?? 'move'), h('span', { class: 'grow' }, name), up, del);
-  }));
-
-  const rec = h('button', { class: recorder ? 'danger' : '', onclick: toggleRecord }, recorder ? '■ Stop recording' : '● Record');
-  const addKey = captureButton((hid) => {
-    m.events.push({ type: 'keyboard', action: 'down', value: hid }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: hid });
-    renderMacroEditor();
-  });
-  addKey.textContent = '+ Key press';
-  const mouseSel = h('select', {}, MOUSE_ACTIONS.filter((x) => x.code).map((x) => h('option', { value: x.code }, x.label)));
-  ed.replaceChildren(
-    h('div', { class: 'card-head' }, h('h2', {}, `Macro ${S.macroIndex + 1}`), h('span', { class: 'spacer' }),
-      recorder ? h('span', { class: 'recording' }, 'Recording — type on your keyboard') : ''),
-    h('div', { class: 'row' }, rec, addKey,
-      h('button', { onclick: () => { m.events.push({ type: 'delay', value: 50 }); renderMacroEditor(); } }, '+ Delay'),
-      mouseSel, h('button', { onclick: () => { const v = Number(mouseSel.value); m.events.push({ type: 'mouse_button', action: 'down', value: v }, { type: 'delay', value: 20 }, { type: 'mouse_button', action: 'up', value: v }); renderMacroEditor(); } }, '+ Click'),
-      h('button', { class: 'ghost', onclick: () => { m.events = []; renderMacroEditor(); } }, 'Clear')),
-    list,
-    ...(m.events.length ? [] : [h('p', { class: 'muted' }, 'Empty macro. Record keystrokes or add steps.')]),
-    h('div', { class: 'macro-footer' },
-      h('div', { class: 'repeat-row' },
-        h('span', { class: 'label' }, 'Repeat'),
-        stepper(m.repeatCount, 1, 999, (v) => (m.repeatCount = v)),
-        h('span', { class: 'hint' }, 'How many times the macro plays when a key uses it in “Play N times” mode.')),
-      h('div', { class: 'usage-row' },
-        h('div', { class: 'usage' + (full ? ' full' : '') }, h('i', { style: `width:${Math.min(100, (used / MACRO_LIMIT) * 100)}%` })),
-        h('span', { class: 'muted small' }, `${Number.isFinite(used) ? used : '>256'} / ${MACRO_LIMIT} bytes`)),
-      h('div', { class: 'row' }, h('button', { class: 'primary', disabled: full, onclick: saveMacro }, 'Save to keyboard'),
-        h('span', { class: 'muted small' }, 'To use it, assign “Macro ' + (S.macroIndex + 1) + '” to a key on the Keys tab.'))),
-  );
-  list.scrollTop = keepScroll;
-}
-
-function stepper(value, min, max, onChange) {
-  const clamp = (v) => Math.max(min, Math.min(max, Math.round(Number(v)) || min));
-  const input = h('input', { type: 'number', min, max, value, 'aria-label': 'Repeat count', onchange: () => { input.value = clamp(input.value); onChange(Number(input.value)); } });
-  const step = (d) => { input.value = clamp(Number(input.value) + d); onChange(Number(input.value)); };
-  return h('span', { class: 'stepper' },
-    h('button', { type: 'button', 'aria-label': 'Fewer', onclick: () => step(-1) }, '−'), input,
-    h('button', { type: 'button', 'aria-label': 'More', onclick: () => step(1) }, '+'));
-}
-
-function toggleRecord() {
-  if (recorder) {
-    window.removeEventListener('keydown', recorder.on, true);
-    window.removeEventListener('keyup', recorder.on, true);
-    recorder = undefined;
-    renderMacroEditor();
-    return;
   }
-  let last;
-  const on = (e) => {
-    if (e.repeat) { e.preventDefault(); return; }
-    const hid = CODE_TO_HID[e.code];
-    if (!hid) return;
-    e.preventDefault();
-    const now = performance.now();
-    if (last !== undefined) S.macro.events.push({ type: 'delay', value: Math.max(1, Math.min(65535, Math.round(now - last))) });
-    last = now;
-    S.macro.events.push({ type: 'keyboard', action: e.type === 'keydown' ? 'down' : 'up', value: hid });
-    renderMacroEditor();
-  };
-  recorder = { on };
-  window.addEventListener('keydown', on, true);
-  window.addEventListener('keyup', on, true);
-  renderMacroEditor();
+  if (changed) toast(`Play mode updated on ${changed} macro key${changed === 1 ? '' : 's'} — press “Write to keyboard” to save it`);
+  return changed > 0;
 }
 
-async function saveMacro() {
-  if (recorder) toggleRecord();
-  await busy('Writing macro…', async () => {
-    await S.kb.setMacro(S.macroIndex, S.macro.events, S.macro.repeatCount);
-    S.macroCache.set(S.macroIndex, { events: S.macro.events.map((e) => ({ ...e })), repeatCount: S.macro.repeatCount });
-    setMacroStatus(S.macroIndex, S.macro.events.length > 0);
-    renderMacroSlots();
-    toast(`Macro ${S.macroIndex + 1} saved`);
+// Reads a macro that is on the keyboard but not in the library, and adds it.
+async function copyMacroToLibrary(s, mode) {
+  await busy('Reading the macro from the keyboard…', async () => {
+    const got = await S.kb.getMacro(s);
+    if (!got.events.length) throw new Error('That keyboard slot is empty.');
+    const item = macrosView.adopt({ name: `Keyboard macro ${s + 1}`, mode, repeat: Math.max(1, got.repeatCount || 1), events: got.events });
+    const map = slotMap();
+    for (const k of Object.keys(map)) if (map[k] === s) delete map[k];
+    map[item.id] = s;
+    saveSlotMap(deviceKey(), map);
+    toast(`Added “${item.name}” to your macro library`);
+    renderKeys();
+    renderEditor();
   });
 }
 
@@ -991,7 +969,7 @@ async function loadSettings() {
       await busy('Resetting…', async () => {
         await S.kb.factoryReset();
         S.loaded.clear();
-        S.macroCache.clear(); forgetMacroStatus();
+        saveSlotMap(deviceKey(), {}); // the keyboard's macro slots are empty now
         toast('Keyboard reset to factory defaults');
         await loadSettings();
         S.loaded.add('settings');
@@ -1018,7 +996,8 @@ $('#exportBtn').addEventListener('click', () => busy('Reading everything from th
     for (let i = 0; i < 128; i++) if (m[i * 4] === 9) macroIdx.add(m[i * 4 + 2]);
     data.fn.push(hex(m));
   }
-  for (const i of [...macroIdx].sort((a, b) => a - b)) data.macros[i] = await kb.getMacro(i);
+  if (!kb.dongle) for (const i of [...macroIdx].sort((a, b) => a - b)) data.macros[i] = await kb.getMacro(i);
+  else data.macrosSkipped = true;
   data.current = {
     profile: S.profile, light: await kb.getLight(), logo: S.model.logo ? await kb.getLogoLight() : undefined,
     picture: hex(await kb.getUserPicture()), options: await kb.getKeyboardOption(), reportRate: await kb.getReportRate(),
@@ -1029,7 +1008,9 @@ $('#exportBtn').addEventListener('click', () => busy('Reading everything from th
   document.body.append(a);
   a.click();
   a.remove();
-  $('#backupStatus').textContent = `Exported ${S.model.profiles} profiles, ${S.model.fnLayers} Fn layers and ${macroIdx.size} macros.`;
+  $('#backupStatus').textContent = kb.dongle
+    ? `Exported ${S.model.profiles} profiles and ${S.model.fnLayers} Fn layers. Macros were skipped — they can only be read over the USB cable.`
+    : `Exported ${S.model.profiles} profiles, ${S.model.fnLayers} Fn layers and ${macroIdx.size} macros.`;
 }));
 
 $('#importFile').addEventListener('change', async (e) => {
@@ -1048,9 +1029,9 @@ $('#importFile').addEventListener('change', async (e) => {
   const unhex = (s) => Uint8Array.from(s.match(/../g), (x) => parseInt(x, 16));
   await busy('Restoring backup…', async () => {
     const kb = S.kb;
-    for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrix(unhex(data.profiles[p].matrix), p);
-    for (let f = 0; f < Math.min(data.fn.length, S.model.fnLayers); f++) await kb.setFnMatrix(unhex(data.fn[f]), f);
-    for (const [i, m] of Object.entries(data.macros)) await kb.setMacro(Number(i), m.events, m.repeatCount || 1);
+    for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrixVerified(unhex(data.profiles[p].matrix), p);
+    for (let f = 0; f < Math.min(data.fn.length, S.model.fnLayers); f++) await kb.setFnMatrixVerified(unhex(data.fn[f]), f);
+    if (!kb.dongle) for (const [i, m] of Object.entries(data.macros)) await kb.setMacro(Number(i), m.events, m.repeatCount || 1);
     const c = data.current;
     if (c) {
       await kb.setProfile(c.profile ?? 0);
@@ -1065,8 +1046,13 @@ $('#importFile').addEventListener('change', async (e) => {
       if (c.sleep) await kb.setSleepTime(c.sleep);
     }
     S.loaded.clear();
-    S.macroCache.clear(); forgetMacroStatus();
-    $('#backupStatus').textContent = 'Backup restored.';
+    if (!kb.dongle && data.macros) {
+      // restored slots no longer hold the library macros that were there
+      const map = slotMap();
+      for (const k of Object.keys(map)) if (String(map[k]) in data.macros) delete map[k];
+      saveSlotMap(deviceKey(), map);
+    }
+    $('#backupStatus').textContent = kb.dongle && Object.keys(data.macros || {}).length ? 'Backup restored, except macros — restore again over the USB cable to write them.' : 'Backup restored.';
     toast('Backup restored');
   });
 });
@@ -1108,7 +1094,7 @@ $('#logToggle').addEventListener('change', (e) => { S.logging = e.target.checked
 $('#logClearBtn').addEventListener('click', () => { S.logLines = []; renderLog(); });
 
 window.addEventListener('beforeunload', (e) => {
-  if (isDirty()) e.preventDefault();
+  if (isDirty() || macrosView.isDirty()) e.preventDefault();
 });
 
 initConnect();

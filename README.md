@@ -7,7 +7,7 @@ receiver) and configure it over [WebHID](https://developer.mozilla.org/docs/Web/
 | Feature | Supported |
 |---|---|
 | Key remapping on 4 profiles + 2 Fn layers (keys, combos, media/system, mouse, macros, profile switching, disable), knob press and rotation | ✅ |
-| Macros: record from your keyboard, edit steps and delays, 3 playback modes, 20 slots | ✅ |
+| Macros: a library saved in the browser (folders, import/export), recording of key presses and mouse clicks, step tiles with editable delays, Loop / Toggle / Press-to-play; written to the keyboard (20 slots, picked automatically) when assigned to a key | ✅ |
 | Backlight: all 24 effects, brightness, speed, colour / rainbow, direction | ✅ |
 | LED strip (models that have one) | ✅ |
 | Custom per-key colours (painter) | ✅ |
@@ -93,6 +93,8 @@ web/                  static site published by Cloudflare Pages
   index.html, css/    UI
   js/protocol.js      packet builders / Keyboard class (incl. 2.4 GHz receiver handshake)
   js/codec.js         key-action and macro encoders
+  js/macro-library.js macro library, vendor save rules, keyboard slot allocation
+  js/macros-view.js   Macros tab (library panel, recorder, step tiles)
   js/models.js        device ids, default matrices, physical layout, effect lists
   js/transports.js    WebHID and demo transports
   js/host-effects.js  music rhythm / screen colour streaming

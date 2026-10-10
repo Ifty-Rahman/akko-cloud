@@ -69,7 +69,8 @@ const MOD_LABEL = { ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', win: 'Win' };
 const MAX_TEXT = 6; // characters that comfortably fit on a 1u keycap
 
 // Returns { text?, icon?, special, pop?: { title, keys?: string[], text? } }
-export function keycap(bytes, { fnLayer = false } = {}) {
+// macroName(slot) -> library name of the macro stored in that keyboard slot
+export function keycap(bytes, { fnLayer = false, macroName } = {}) {
   const a = decodeAction(bytes);
   switch (a.type) {
     case 'disabled':
@@ -93,7 +94,7 @@ export function keycap(bytes, { fnLayer = false } = {}) {
       return { icon: MOUSE_ICONS[a.label] ?? 'mouse', special: true, pop: { title: `Mouse: ${a.label.toLowerCase()}` } };
     case 'macro': {
       const mode = MACRO_MODES.find((m) => m.id === a.mode);
-      return { text: `M${a.index + 1}`, special: true, pop: { title: `Macro ${a.index + 1}`, text: mode?.label } };
+      return { icon: 'macro', special: true, pop: { title: macroName?.(a.index) ?? 'Macro', text: mode ? `Plays: ${mode.label.toLowerCase()}` : undefined } };
     }
     default:
       return { icon: 'sparkle', special: true, pop: { title: 'Built-in function', text: 'A special function set by the keyboard’s firmware. It is kept unless you change it.' } };

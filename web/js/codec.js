@@ -116,9 +116,9 @@ export const MOUSE_ACTIONS = [
 
 export const MODIFIERS = { none: 0, ctrl: 224, shift: 225, alt: 226, win: 227 };
 export const MACRO_MODES = [
-  { id: 'repeat_times', code: 0, label: 'Play N times' },
-  { id: 'on_off', code: 1, label: 'Toggle loop on/off' },
-  { id: 'touch_repeat', code: 2, label: 'Loop while held' },
+  { id: 'repeat_times', code: 0, label: 'Loop' },
+  { id: 'on_off', code: 1, label: 'Toggle with the key' },
+  { id: 'touch_repeat', code: 2, label: 'Press to play' },
 ];
 
 const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);

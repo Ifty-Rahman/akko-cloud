@@ -614,6 +614,26 @@ export class Keyboard {
     return this.exclusive(() => this.writePaged(CMD.SET_KEYMATRIX, profile, matrix512, 9, 1000));
   }
 
+  // Write, read back and compare; rewrite once if the keyboard did not store
+  // it (a dropped 2.4 GHz link can leave a half-written map behind).
+  async verifiedWrite(write, read, data, what) {
+    const n = 9 * 56; // bytes actually written by the paged upload
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await write();
+      const back = await read();
+      if (data.slice(0, n).every((v, i) => v === back[i])) return attempt;
+    }
+    throw new Error(`The keyboard did not store the ${what} correctly. Plug in the USB cable and write it again.`);
+  }
+
+  setKeyMatrixVerified(matrix512, profile = this.profile) {
+    return this.verifiedWrite(() => this.setKeyMatrix(matrix512, profile), () => this.getKeyMatrix(profile), matrix512, 'key map');
+  }
+
+  setFnMatrixVerified(matrix512, fnIndex) {
+    return this.verifiedWrite(() => this.setFnMatrix(matrix512, fnIndex), () => this.getFnMatrix(fnIndex), matrix512, 'Fn layer');
+  }
+
   getFnMatrix(fnIndex) {
     return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8));
   }

@@ -54,6 +54,16 @@ const ICONS = {
   rotateRight: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 3.5v4.2h-4.2"/>',
   knobPress: '<circle cx="12" cy="14" r="6.5"/><path d="M12 2v5M9.5 4.5L12 7l2.5-2.5"/>',
   disabled: '<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>',
+  // macro library / editor
+  share: '<path d="M12 15V3.5M7.5 8L12 3.5 16.5 8"/><path d="M5 12.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-6.5"/>',
+  upload: '<path d="M12 4v11.5M7.5 11.5L12 16l4.5-4.5"/><path d="M4.5 19.5h15"/>',
+  trash: '<path d="M4 6.5h16M9.5 6.5V4.5h5v2M6.5 6.5l1 13.5h9l1-13.5M10 10.5v6M14 10.5v6"/>',
+  plusCircle: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/>',
+  folderPlus: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M12 10.5v5.5M9.25 13.25h5.5"/>',
+  chevron: '<path d="M6 9l6 6 6-6"/>',
+  caretDown: '<path d="M6 9h12l-6 7z" fill="currentColor"/>',
+  caretUp: '<path d="M6 15h12l-6-7z" fill="currentColor"/>',
+  help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.4"/><path d="M12 16.8h.01"/>',
 };
 
 export function icon(name, cls = 'ki') {

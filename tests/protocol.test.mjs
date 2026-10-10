@@ -299,7 +299,10 @@ test('keycaps: icons for media/brightness, combo icon + pop-up keys, friendly un
   assert.equal(raw.icon, 'sparkle');
   assert.ok(!/[0-9a-f]{2} [0-9a-f]{2}/.test(raw.pop.text), 'no hex shown to users');
   assert.equal(keycap([0, 0, 0, 0], { fnLayer: true }).text, '');
-  assert.equal(keycap([9, 1, 2, 0]).text, 'M3');
+  const mac = keycap([9, 1, 2, 0], { macroName: (slot) => (slot === 2 ? 'Login' : undefined) });
+  assert.equal(mac.icon, 'macro');
+  assert.equal(mac.pop.title, 'Login');
+  assert.match(mac.pop.text, /toggle/);
   assert.equal(keycap([0, 0, 41, 0]).text, 'Esc');
   // every visible label fits on a 1u keycap; anything longer has a pop-up
   for (let hid = 4; hid <= 231; hid++) {
@@ -321,4 +324,22 @@ test('colour mode codes: PC75B Plus+ uses 7 = rainbow, 8 = solid; others keep ve
   assert.equal(Keyboard.encodeLogoLight({ type: 'LightBreath', value: 4, speed: 2, rgb: 0xff0000, dazzle: true }, plusPlus)[4] & 15, 7);
   assert.equal(MODELS.find((m) => m.ids.includes(413)).colourCodes, undefined); // vendor default
   assert.equal(Keyboard.encodeLight(7, { type: 'LightAlwaysOn', value: 4, rgb: 1, dazzle: true }, true)[4] & 15, 8);
+});
+
+test('verified key-map write: rewrites once when the keyboard did not store it, errors after that', async () => {
+  const { t, kb } = setup();
+  const m = Uint8Array.from(MODELS[0].matrix);
+  m.set([3, 0, 111, 0], 48 * 4);
+  assert.equal(await kb.setKeyMatrixVerified(m, 0), 0); // stored first time
+  // drop the first page once (simulates a link hiccup mid-write)
+  const real = t.sendFeature.bind(t);
+  let dropped = false;
+  t.sendFeature = async (d) => { if (d[0] === CMD.SET_KEYMATRIX && d[4] === 0 && !dropped) { dropped = true; return; } return real(d); };
+  m.set([0, 0, 57, 0], 0);
+  assert.equal(await kb.setKeyMatrixVerified(m, 0), 1); // needed one rewrite
+  assert.deepEqual(Array.from(t.matrices[0].slice(0, 4)), [0, 0, 57, 0]);
+  // keyboard never stores it -> clear error
+  t.sendFeature = async (d) => (d[0] === CMD.SET_KEYMATRIX ? undefined : real(d));
+  m.set([0, 0, 58, 0], 0);
+  await assert.rejects(kb.setKeyMatrixVerified(m, 0), /did not store the key map/);
 });

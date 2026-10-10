@@ -106,12 +106,8 @@
 
       <div class="tab-panel" data-panel="macros" hidden>
         <div class="macro-layout">
-          <div class="card macro-slots">
-            <h2>Macro slots</h2>
-            <p class="muted small">Slots are shared by all profiles. Assign a macro to a key on the Keys tab.</p>
-            <ul id="macroSlotList" class="scroll-gutter"></ul>
-          </div>
-          <div class="card" id="macroEditor"></div>
+          <div class="card macro-lib" id="macroLib"></div>
+          <div class="card macro-edit" id="macroEdit"></div>
         </div>
       </div>
 
@@ -122,7 +118,7 @@
       <div class="tab-panel" data-panel="backup" hidden>
         <div class="card">
           <h2>Backup &amp; restore</h2>
-          <p>Save every profile (key maps, Fn layers, lighting, options) plus the macro slots in use to a file, and restore it later or on another PC75B.</p>
+          <p>Save every profile (key maps, Fn layers, lighting, options) plus the macros your keys use to a file, and restore it later or on another PC75B.</p>
           <div class="row">
             <button class="primary" id="exportBtn">Export backup</button>
             <label class="button">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>

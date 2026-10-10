@@ -80,6 +80,14 @@ export class KeyboardAsleepError extends Error {
   }
 }
 
+export class IncompleteWriteError extends Error {
+  constructor(what, cause) {
+    super(`Writing the ${what} did not finish${cause ? ` (${cause.message.replace(/\.$/, '')})` : ''}. Some keys may not work until it is written again. Your changes are kept: press “Write to keyboard” again, ideally over the USB cable.`);
+    this.name = 'IncompleteWriteError';
+    this.cause = cause;
+  }
+}
+
 export function applyChecksum(data, type) {
   if (type === Checksum.BIT7) {
     let s = 0;
@@ -637,16 +645,23 @@ export class Keyboard {
     return this.exclusive(() => this.writePaged(CMD.SET_KEYMATRIX, profile, matrix512, 9, 1000));
   }
 
-  // Write, read back and compare; rewrite once if the keyboard did not store
-  // it (a dropped 2.4 GHz link can leave a half-written map behind).
-  async verifiedWrite(write, read, data, what) {
-    const n = 9 * 56; // bytes actually written by the paged upload
+  // Write, read back and compare. A paged upload that was cut off part way
+  // (link drop) or did not store correctly is redone in full once: a partial
+  // upload leaves the keys of the missing pages disabled.
+  async verifiedWrite(write, read, data, what, n = 9 * 56 /* bytes the paged upload carries */) {
+    let interrupted;
     for (let attempt = 0; attempt < 2; attempt++) {
-      await write();
-      const back = await read();
-      if (data.slice(0, n).every((v, i) => v === back[i])) return attempt;
+      try {
+        await write();
+        const back = await read();
+        if (data.slice(0, n).every((v, i) => v === back[i])) return attempt;
+        interrupted = undefined;
+      } catch (e) {
+        interrupted = e;
+        if (e instanceof KeyboardAsleepError) break; // nobody pressed a key for a minute
+      }
     }
-    throw new Error(`The keyboard did not store the ${what} correctly. Plug in the USB cable and write it again.`);
+    throw new IncompleteWriteError(what, interrupted);
   }
 
   setKeyMatrixVerified(matrix512, profile = this.profile) {
@@ -681,6 +696,11 @@ export class Keyboard {
 
   async getMacro(index) {
     return decodeMacro(await this.getMacroRaw(index));
+  }
+
+  setMacroVerified(index, events, repeatCount = 1) {
+    const buf = encodeMacro(events, repeatCount);
+    return this.verifiedWrite(() => this.setMacro(index, events, repeatCount), () => this.getMacroRaw(index), buf, 'macro', buf.length);
   }
 
   setMacro(index, events, repeatCount = 1) {

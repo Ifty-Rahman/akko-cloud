@@ -44,7 +44,7 @@ function toast(msg, error = false) {
   t.classList.toggle('error', error);
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), error ? 6000 : 2600);
+  toastTimer = setTimeout(() => t.classList.remove('show'), error ? Math.max(6000, msg.length * 70) : 2600);
 }
 
 async function busy(text, fn) {
@@ -351,8 +351,11 @@ function setKeysLoading(on) {
 const isDirty = () => !S.keysLoading && S.orig && S.work && !eqBytes(Array.from(S.orig), Array.from(S.work));
 function updateDirty() {
   const d = isDirty();
-  $('#keysDirty').hidden = !d;
-  $('#keysWriteBtn').disabled = !d;
+  const broken = S.writeInterrupted === `${S.layer}:${layerIndex()}`;
+  $('#keysDirty').hidden = !d && !broken;
+  $('#keysDirty').textContent = broken ? 'Last write did not finish — write again' : 'Unsaved changes';
+  $('#keysDirty').classList.toggle('err', broken);
+  $('#keysWriteBtn').disabled = !d && !broken;
 }
 
 const capFor = (idx) => keycap(slot(S.work, idx), { fnLayer: isFnLayer(), macroName: macroLabel });
@@ -379,18 +382,18 @@ function renderKeys() {
   hidePop();
   kb.replaceChildren(...LAYOUT.map((k) => keyButton(k.idx, { class: 'key', style: `--x:${k.x};--y:${k.y};--w:${k.w}` }, capFor(k.idx))));
   kb.append(keyButton(KNOB.press, { class: 'knob' }, capFor(KNOB.press)));
-  const knobRow = (idx, iconName, label) => {
+  const knobRow = (idx, label) => {
     const cap = capFor(idx);
     const b = keyButton(idx, { class: 'knob-action' }, cap);
-    b.prepend(h('span', { class: 'knob-what' }, h('span', { class: 'knob-dir', innerHTML: icon(iconName) }), label));
+    b.prepend(h('span', { class: 'knob-what' }, label));
     b.append(h('span', { class: 'knob-desc' }, isFnLayer() && !cap.special && !cap.text ? 'Built-in' : actionText(decodeAction(slot(S.work, idx)))));
     return b;
   };
   $('#knobPanel').replaceChildren(
     h('span', { class: 'knob-title' }, 'Knob'),
-    knobRow(KNOB.counterClockwise, 'rotateLeft', 'Turn left'),
-    knobRow(KNOB.clockwise, 'rotateRight', 'Turn right'),
-    knobRow(KNOB.press, 'knobPress', 'Press'),
+    knobRow(KNOB.counterClockwise, 'Turn left'),
+    knobRow(KNOB.clockwise, 'Turn right'),
+    knobRow(KNOB.press, 'Press'),
   );
   updateDirty();
 }
@@ -613,8 +616,16 @@ $('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', as
     S.pendingMacros.delete(s);
   }
   $('#busyText').textContent = 'Writing key map…';
-  if (S.layer === 'base') await S.kb.setKeyMatrixVerified(S.work, S.profile);
-  else await S.kb.setFnMatrixVerified(S.work, layerIndex());
+  const target = `${S.layer}:${layerIndex()}`;
+  try {
+    if (S.layer === 'base') await S.kb.setKeyMatrixVerified(S.work, S.profile);
+    else await S.kb.setFnMatrixVerified(S.work, layerIndex());
+  } catch (e) {
+    S.writeInterrupted = target; // the keyboard may hold a partial map: keep Write enabled
+    updateDirty();
+    throw e;
+  }
+  if (S.writeInterrupted === target) S.writeInterrupted = undefined;
   S.orig = Uint8Array.from(S.work);
   storeMatrix(S.work);
   renderKeys();
@@ -829,7 +840,7 @@ const slotMap = () => loadSlotMap(deviceKey());
 async function writeMacroToKeyboard(m, slotIndex) {
   const err = validateMacro(m.events);
   if (err) throw new Error(`“${m.name}”: ${err}`);
-  await S.kb.setMacro(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
+  await S.kb.setMacroVerified(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
 }
 
 const macrosView = createMacrosView({ h, $, toast, busy, S, writeMacroToKeyboard });
@@ -1031,7 +1042,7 @@ $('#importFile').addEventListener('change', async (e) => {
     const kb = S.kb;
     for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrixVerified(unhex(data.profiles[p].matrix), p);
     for (let f = 0; f < Math.min(data.fn.length, S.model.fnLayers); f++) await kb.setFnMatrixVerified(unhex(data.fn[f]), f);
-    if (!kb.dongle) for (const [i, m] of Object.entries(data.macros)) await kb.setMacro(Number(i), m.events, m.repeatCount || 1);
+    if (!kb.dongle) for (const [i, m] of Object.entries(data.macros)) await kb.setMacroVerified(Number(i), m.events, m.repeatCount || 1);
     const c = data.current;
     if (c) {
       await kb.setProfile(c.profile ?? 0);

@@ -392,5 +392,37 @@ test('verified key-map write: rewrites once when the keyboard did not store it, 
   // keyboard never stores it -> clear error
   t.sendFeature = async (d) => (d[0] === CMD.SET_KEYMATRIX ? undefined : real(d));
   m.set([0, 0, 58, 0], 0);
-  await assert.rejects(kb.setKeyMatrixVerified(m, 0), /did not store the key map/);
+  await assert.rejects(kb.setKeyMatrixVerified(m, 0), /key map did not finish/);
+});
+
+test('verified write: an upload cut off part way is redone in full', async () => {
+  const kb = new Keyboard(new DemoTransport(MODELS[1]));
+  const m = Uint8Array.from(MODELS[1].matrix);
+  m.set([9, 0, 19, 0], 50 * 4);
+  const real = kb.setKeyMatrix.bind(kb);
+  let calls = 0;
+  kb.setKeyMatrix = async (data, p) => {
+    if (++calls === 1) {
+      await kb.writePaged(0x09, p, data.slice(0, 112), 2, 0); // only 2 of 9 pages arrive
+      throw new Error('link dropped');
+    }
+    return real(data, p);
+  };
+  assert.equal(await kb.setKeyMatrixVerified(m, 0), 1);
+  assert.equal(calls, 2);
+  assert.deepEqual(Array.from((await kb.getKeyMatrix(0)).slice(50 * 4, 50 * 4 + 4)), [9, 0, 19, 0]);
+});
+
+test('verified write: still incomplete after the retry -> IncompleteWriteError', async () => {
+  const { IncompleteWriteError } = await import('../web/js/protocol.js');
+  const kb = new Keyboard(new DemoTransport(MODELS[1]));
+  kb.setKeyMatrix = async () => { throw new Error('link dropped'); };
+  await assert.rejects(kb.setKeyMatrixVerified(Uint8Array.from(MODELS[1].matrix), 0), (e) => e instanceof IncompleteWriteError && /Write to keyboard/.test(e.message));
+});
+
+test('macro writes are read back', async () => {
+  const kb = new Keyboard(new DemoTransport(MODELS[1]));
+  const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
+  assert.equal(await kb.setMacroVerified(19, ev, 1), 0);
+  assert.deepEqual((await kb.getMacro(19)).events, ev);
 });

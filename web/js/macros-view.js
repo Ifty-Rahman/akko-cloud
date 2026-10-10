@@ -537,6 +537,14 @@ export function createMacrosView(d) {
   }
 
   function render() {
+    // open the most recently edited macro rather than an empty editor
+    if (!V.edit || !byId(V.sel)) {
+      const last = [...V.lib.macros].sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+      V.sel = last?.id;
+      V.edit = last ? { name: last.name, mode: last.mode, repeat: last.repeat, events: last.events.map((e) => ({ ...e })) } : undefined;
+      V.dirty = false;
+      V.tile = undefined;
+    }
     renderLib();
     renderEditor();
   }

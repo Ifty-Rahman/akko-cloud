@@ -95,7 +95,7 @@
             <button class="primary" id="picWriteBtn">Write &amp; activate</button>
           </div>
           <div class="paint-tools">
-            <label>Brush <input type="color" id="brushColor" value="#5b8cff"></label>
+            <span class="brush-pick">Brush <label class="colour-box" id="brushBox" title="Choose brush colour" style="background:#5b8cff"><input type="color" id="brushColor" value="#5b8cff" aria-label="Brush colour"></label></span>
             <button class="ghost" id="picFillBtn">Fill all</button>
             <button class="ghost" id="picClearBtn">Clear</button>
             <span class="muted">Click or drag across keys to paint.</span>
@@ -109,7 +109,7 @@
           <div class="card macro-slots">
             <h2>Macro slots</h2>
             <p class="muted small">Slots are shared by all profiles. Assign a macro to a key on the Keys tab.</p>
-            <ul id="macroSlotList"></ul>
+            <ul id="macroSlotList" class="scroll-gutter"></ul>
           </div>
           <div class="card" id="macroEditor"></div>
         </div>

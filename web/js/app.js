@@ -5,7 +5,7 @@ import {
   HID_NAMES, CODE_TO_HID, FUNCTION_ACTIONS, MOUSE_ACTIONS, MACRO_MODES, MACRO_LIMIT,
   encodeAction, decodeAction, describeAction, hidName, macroByteLength, rgbToHex, hexToRgb,
 } from './codec.js';
-import { Keyboard } from './protocol.js';
+import { Keyboard, VENDOR_COLOUR_CODES } from './protocol.js';
 import { WebHidTransport, DemoTransport } from './transports.js';
 import { MusicFollower, ScreenFollower } from './host-effects.js';
 import { KEYBINDING_SECTIONS } from './keybindings.js';
@@ -151,8 +151,9 @@ async function connect(transport) {
     const profile = await kb.getProfile().catch(() => 0);
     Object.assign(S, {
       kb, transport, id, fw: undefined, profile, model: findModel(id), layer: 'base', selected: undefined,
-      loaded: new Set(), macroCache: new Map(),
+      loaded: new Set(), macroCache: new Map(), macroStatus: undefined, macroScanned: false, macroScanning: false,
     });
+    kb.colourCodes = S.model.colourCodes ?? VENDOR_COLOUR_CODES;
     transport.onDisconnect(() => {
       toast('Keyboard disconnected', true);
       disconnect();
@@ -496,7 +497,10 @@ function renderEditor() {
       body.append(h('label', { class: 'field' }, h('span', {}, 'Mouse action'), sel));
       read = () => ({ type: 'mouse', bytes: MOUSE_ACTIONS[Number(sel.value)].bytes });
     } else if (t === 'macro') {
-      const sl = h('select', {}, range(0, S.model.maxMacros - 1).map((i) => h('option', { value: i, selected: cur.index === i }, `Macro ${i + 1}`)));
+      loadMacroStatus();
+      const label = (i) => { const st = S.macroStatus.get(i); return `Macro ${i + 1}${st === 'saved' ? ' — saved' : st === 'empty' ? ' — empty' : ''}`; };
+      const sl = h('select', {}, range(0, S.model.maxMacros - 1).map((i) => h('option', { value: i, selected: cur.index === i }, label(i))));
+      if (!S.macroScanned) scanMacroSlots().then(() => { if (sl.isConnected) [...sl.options].forEach((o) => (o.textContent = label(Number(o.value)))); });
       const md = h('select', {}, MACRO_MODES.map((m) => h('option', { value: m.id, selected: cur.mode === m.id }, m.label)));
       body.append(h('label', { class: 'field' }, h('span', {}, 'Macro slot'), sl), h('label', { class: 'field' }, h('span', {}, 'Playback'), md),
         h('p', { class: 'muted small' }, 'Edit the macro contents on the Macros tab.'));
@@ -730,6 +734,7 @@ function paintAt(target) {
 $('#kbPaint').addEventListener('pointerdown', (e) => { painting = true; paintAt(e.target); });
 $('#kbPaint').addEventListener('pointermove', (e) => { if (painting) paintAt(document.elementFromPoint(e.clientX, e.clientY)); });
 window.addEventListener('pointerup', () => (painting = false));
+$('#brushColor').addEventListener('input', (e) => ($('#brushBox').style.background = e.target.value));
 $('#picFillBtn').addEventListener('click', () => {
   const { r, g, b } = hexToRgb($('#brushColor').value);
   for (const k of LAYOUT) S.pic.set([r, g, b], k.idx * 3);
@@ -749,24 +754,72 @@ $('#picWriteBtn').addEventListener('click', () => busy('Writing per-key colours�
 
 // ================================================================== MACROS
 async function loadMacros() {
+  loadMacroStatus();
   renderMacroSlots();
   await openMacro(S.macroIndex);
+  scanMacroSlots(); // background: fills in saved/empty for the other slots
+}
+
+// ---- which slots hold a macro (shown on the Macros tab and in the Keys editor)
+const macroStatusKey = () => `akko-macros:${S.id & 0x7fffffff}`;
+function loadMacroStatus() {
+  if (S.macroStatus) return;
+  S.macroStatus = new Map();
+  try {
+    const saved = JSON.parse(localStorage.getItem(macroStatusKey()) || '{}');
+    for (const [k, v] of Object.entries(saved)) S.macroStatus.set(Number(k), v);
+  } catch { /* ignore */ }
+}
+function setMacroStatus(i, saved) {
+  loadMacroStatus();
+  S.macroStatus.set(i, saved ? 'saved' : 'empty');
+  try { localStorage.setItem(macroStatusKey(), JSON.stringify(Object.fromEntries(S.macroStatus))); } catch { /* ignore */ }
+}
+function forgetMacroStatus() {
+  S.macroStatus = undefined;
+  S.macroScanned = false;
+  try { localStorage.removeItem(macroStatusKey()); } catch { /* ignore */ }
+}
+const headIsEmpty = (page) => page.slice(2).every((b) => b === 0);
+
+async function scanMacroSlots() {
+  if (S.macroScanned || S.macroScanning || !S.kb) return;
+  S.macroScanning = true;
+  const kb = S.kb;
+  try {
+    for (let i = 0; i < S.model.maxMacros; i++) {
+      if (S.kb !== kb) return;
+      if (S.macroCache.has(i)) continue; // already read in full
+      if (kb.dongle) await new Promise((r) => setTimeout(r, 250)); // be gentle with the 2.4 GHz link
+      const page = await kb.getMacroHead(i);
+      setMacroStatus(i, !headIsEmpty(page));
+      if (currentTab() === 'macros') renderMacroSlots();
+    }
+    S.macroScanned = true;
+  } catch {
+    /* stop quietly; slots already checked keep their state */
+  } finally {
+    S.macroScanning = false;
+  }
 }
 
 function renderMacroSlots() {
   const ul = $('#macroSlotList');
+  const top = ul.scrollTop;
   ul.replaceChildren(...range(0, S.model.maxMacros - 1).map((i) => {
-    const m = S.macroCache.get(i);
-    const info = m ? (m.events.length ? `${m.events.filter((e) => e.type !== 'delay').length} steps` : 'empty') : '';
+    const st = S.macroStatus?.get(i);
+    const badge = st === 'saved' ? h('span', { class: 'state saved' }, 'saved') : st === 'empty' ? h('span', { class: 'state' }, 'empty') : h('span', { class: 'state' }, '');
     return h('li', {}, h('button', { class: i === S.macroIndex ? 'active' : '', onclick: () => busy('Reading macro…', () => openMacro(i)) },
-      h('span', {}, `Macro ${i + 1}`), h('span', { class: 'muted small' }, info)));
+      h('span', {}, `Macro ${i + 1}`), badge));
   }));
+  ul.scrollTop = top;
 }
 
 async function openMacro(i) {
   S.macroIndex = i;
   if (!S.macroCache.has(i)) S.macroCache.set(i, await S.kb.getMacro(i));
   const m = S.macroCache.get(i);
+  setMacroStatus(i, m.events.length > 0);
   S.macro = { events: m.events.map((e) => ({ ...e })), repeatCount: Math.max(1, m.repeatCount || 1) };
   renderMacroSlots();
   renderMacroEditor();
@@ -779,7 +832,9 @@ function renderMacroEditor() {
   let used = 0;
   try { used = macroByteLength(m.events); } catch { used = Infinity; }
   const full = used > MACRO_LIMIT;
-  const list = h('ul', { class: 'events' }, m.events.map((ev, i) => {
+  const prevList = ed.querySelector('.events');
+  const keepScroll = prevList ? prevList.scrollTop : 0;
+  const list = h('ul', { class: 'events scroll-gutter' }, m.events.map((ev, i) => {
     const del = h('button', { class: 'ghost', title: 'Remove', onclick: () => { m.events.splice(i, 1); renderMacroEditor(); } }, '✕');
     const up = h('button', { class: 'ghost', title: 'Move up', disabled: i === 0, onclick: () => { [m.events[i - 1], m.events[i]] = [m.events[i], m.events[i - 1]]; renderMacroEditor(); } }, '↑');
     if (ev.type === 'delay') {
@@ -809,13 +864,27 @@ function renderMacroEditor() {
       h('button', { class: 'ghost', onclick: () => { m.events = []; renderMacroEditor(); } }, 'Clear')),
     list,
     ...(m.events.length ? [] : [h('p', { class: 'muted' }, 'Empty macro. Record keystrokes or add steps.')]),
-    h('div', { class: 'row' }, h('label', { class: 'field', style: 'max-width:200px' }, h('span', {}, 'Repeat count (“Play N times” mode)'),
-      h('input', { type: 'number', min: 1, max: 65535, value: m.repeatCount, onchange: (e) => (m.repeatCount = Math.max(1, Math.min(65535, Number(e.target.value) || 1))) }))),
-    h('div', { class: 'usage' + (full ? ' full' : '') }, h('i', { style: `width:${Math.min(100, (used / MACRO_LIMIT) * 100)}%` })),
-    h('p', { class: 'muted small' }, `${Number.isFinite(used) ? used : '>256'} / ${MACRO_LIMIT} bytes`),
-    h('div', { class: 'row' }, h('button', { class: 'primary', disabled: full, onclick: saveMacro }, 'Save to keyboard'),
-      h('span', { class: 'muted small' }, 'To use it, assign “Macro ' + (S.macroIndex + 1) + '” to a key on the Keys tab.')),
+    h('div', { class: 'macro-footer' },
+      h('div', { class: 'repeat-row' },
+        h('span', { class: 'label' }, 'Repeat'),
+        stepper(m.repeatCount, 1, 999, (v) => (m.repeatCount = v)),
+        h('span', { class: 'hint' }, 'How many times the macro plays when a key uses it in “Play N times” mode.')),
+      h('div', { class: 'usage-row' },
+        h('div', { class: 'usage' + (full ? ' full' : '') }, h('i', { style: `width:${Math.min(100, (used / MACRO_LIMIT) * 100)}%` })),
+        h('span', { class: 'muted small' }, `${Number.isFinite(used) ? used : '>256'} / ${MACRO_LIMIT} bytes`)),
+      h('div', { class: 'row' }, h('button', { class: 'primary', disabled: full, onclick: saveMacro }, 'Save to keyboard'),
+        h('span', { class: 'muted small' }, 'To use it, assign “Macro ' + (S.macroIndex + 1) + '” to a key on the Keys tab.'))),
   );
+  list.scrollTop = keepScroll;
+}
+
+function stepper(value, min, max, onChange) {
+  const clamp = (v) => Math.max(min, Math.min(max, Math.round(Number(v)) || min));
+  const input = h('input', { type: 'number', min, max, value, 'aria-label': 'Repeat count', onchange: () => { input.value = clamp(input.value); onChange(Number(input.value)); } });
+  const step = (d) => { input.value = clamp(Number(input.value) + d); onChange(Number(input.value)); };
+  return h('span', { class: 'stepper' },
+    h('button', { type: 'button', 'aria-label': 'Fewer', onclick: () => step(-1) }, '−'), input,
+    h('button', { type: 'button', 'aria-label': 'More', onclick: () => step(1) }, '+'));
 }
 
 function toggleRecord() {
@@ -849,6 +918,7 @@ async function saveMacro() {
   await busy('Writing macro…', async () => {
     await S.kb.setMacro(S.macroIndex, S.macro.events, S.macro.repeatCount);
     S.macroCache.set(S.macroIndex, { events: S.macro.events.map((e) => ({ ...e })), repeatCount: S.macro.repeatCount });
+    setMacroStatus(S.macroIndex, S.macro.events.length > 0);
     renderMacroSlots();
     toast(`Macro ${S.macroIndex + 1} saved`);
   });
@@ -865,26 +935,32 @@ async function loadSettings() {
   const debVal = h('b', {}, deb);
   const debIn = h('input', { type: 'range', min: m.debounce.min, max: m.debounce.max, value: Math.min(m.debounce.max, Math.max(m.debounce.min, deb || 1)), oninput: (e) => (debVal.textContent = e.target.value) });
   const perf = h('div', { class: 'card' }, h('h2', {}, 'Performance'), h('div', { class: 'form' },
-    h('label', { class: 'field' }, h('span', {}, 'Polling rate (this profile)'), rateSel),
-    h('button', { onclick: () => busy('Setting polling rate…', async () => { await S.kb.setReportRate(Number(rateSel.value)); toast('Polling rate saved'); }) }, 'Apply polling rate'),
-    h('label', { class: 'field' }, h('span', {}, 'Debounce (1 = fastest, 10 = most stable): ', debVal), debIn),
-    h('button', { onclick: () => busy('Setting debounce…', async () => { await S.kb.setDebounce(Number(debIn.value)); toast('Debounce saved'); }) }, 'Apply debounce')));
+    h('label', { class: 'field' }, h('span', {}, 'Polling rate (this profile)'),
+      h('div', { class: 'inline-apply' }, rateSel, h('button', { onclick: () => busy('Setting polling rate…', async () => { await S.kb.setReportRate(Number(rateSel.value)); toast('Polling rate saved'); }) }, 'Apply'))),
+    h('label', { class: 'field' }, h('span', {}, 'Debounce: ', debVal, h('span', { class: 'muted' }, ' (1 = fastest, 10 = most stable)')),
+      h('div', { class: 'inline-apply' }, debIn, h('button', { onclick: () => busy('Setting debounce…', async () => { await S.kb.setDebounce(Number(debIn.value)); toast('Debounce saved'); }) }, 'Apply')))));
 
   const sleepRow = (label, secs, min, max) => {
     const never = h('input', { type: 'checkbox', checked: secs === 0 });
-    const val = h('input', { type: 'number', min, max, value: secs === 0 ? max : Math.round(secs / 60), disabled: secs === 0 });
+    const val = h('input', { type: 'number', min, max, value: secs === 0 ? max : Math.round(secs / 60), disabled: secs === 0, 'aria-label': `${label} (minutes)` });
     never.addEventListener('change', () => (val.disabled = never.checked));
-    return { el: h('div', { class: 'inline' }, h('span', { style: 'min-width:150px' }, label), val, h('span', { class: 'muted' }, 'min'), h('label', { class: 'switch' }, never, h('span', {}, 'Never'))),
-      get: () => (never.checked ? 0 : Math.max(min, Math.min(max, Number(val.value) || min)) * 60) };
+    return {
+      el: h('div', { class: 'sleep-row' }, h('span', { class: 'name' }, label), h('span', { class: 'num' }, val, 'min'),
+        h('label', { class: 'switch' }, never, h('span', {}, 'Never'))),
+      get: () => (never.checked ? 0 : Math.max(min, Math.min(max, Number(val.value) || min)) * 60),
+    };
   };
   const rows = {
-    rf: sleepRow('2.4 GHz – sleep', sl.rf, m.sleep.min, m.sleep.max),
-    deepRf: sleepRow('2.4 GHz – deep sleep', sl.deepRf, m.sleep.minDeep, m.sleep.maxDeep),
-    bt: sleepRow('Bluetooth – sleep', sl.bt, m.sleep.min, m.sleep.max),
-    deepBt: sleepRow('Bluetooth – deep sleep', sl.deepBt, m.sleep.minDeep, m.sleep.maxDeep),
+    rf: sleepRow('Sleep after', sl.rf, m.sleep.min, m.sleep.max),
+    deepRf: sleepRow('Deep sleep after', sl.deepRf, m.sleep.minDeep, m.sleep.maxDeep),
+    bt: sleepRow('Sleep after', sl.bt, m.sleep.min, m.sleep.max),
+    deepBt: sleepRow('Deep sleep after', sl.deepBt, m.sleep.minDeep, m.sleep.maxDeep),
   };
-  const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless sleep'), h('div', { class: 'form' }, Object.values(rows).map((r) => r.el),
-    h('button', { onclick: () => busy('Saving sleep timers…', async () => {
+  const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless sleep'),
+    h('p', { class: 'muted small' }, 'How long the keyboard waits without a key press before saving power. Any key wakes it.'),
+    h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
+    h('div', { class: 'sleep-group' }, h('h3', {}, 'Bluetooth'), rows.bt.el, rows.deepBt.el),
+    h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Saving sleep timers…', async () => {
       await S.kb.setSleepTime(Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.get()])));
       toast('Sleep timers saved');
     }) }, 'Apply sleep timers')));
@@ -913,7 +989,7 @@ async function loadSettings() {
       await busy('Resetting…', async () => {
         await S.kb.factoryReset();
         S.loaded.clear();
-        S.macroCache.clear();
+        S.macroCache.clear(); forgetMacroStatus();
         toast('Keyboard reset to factory defaults');
         await loadSettings();
         S.loaded.add('settings');
@@ -987,7 +1063,7 @@ $('#importFile').addEventListener('change', async (e) => {
       if (c.sleep) await kb.setSleepTime(c.sleep);
     }
     S.loaded.clear();
-    S.macroCache.clear();
+    S.macroCache.clear(); forgetMacroStatus();
     $('#backupStatus').textContent = 'Backup restored.';
     toast('Backup restored');
   });

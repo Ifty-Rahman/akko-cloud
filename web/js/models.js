@@ -105,12 +105,16 @@ const COMMON = {
 
 // Model ids are reported by the keyboard itself (command 0x8F). Over the
 // 2.4 GHz receiver the id carries bit 31 (0x80000000).
+// Colour-mode codes (see protocol.js VENDOR_COLOUR_CODES). Verified on a
+// PC75B Plus+ (id 594): the firmware treats 7 as rainbow and 8 as solid colour.
+const PLUS_PLUS_COLOURS = { rainbow: 7, solid: 8 };
+
 export const MODELS = [
   { ids: [413, 281], name: 'yc200_pc75b', displayName: 'Akko PC75B Plus', matrix: PC75B_MATRIX, logo: true },
-  { ids: [594], name: 'yc300_pc75_s_plus', displayName: 'Akko PC75B Plus+', matrix: PC75B_MATRIX, logo: true },
-  { ids: [695], name: 'yc300_pc75_s_white_plus', displayName: 'Akko PC75B Plus+ (White)', matrix: PC75B_MATRIX, logo: true },
-  { ids: [658], name: 'yc300_pc75_s_mac_white_plus', displayName: 'Akko PC75B Plus+ (Mac, White)', matrix: PC75B_MAC_MATRIX, logo: true },
-  { ids: [1374], name: 'yc300_pc75_s_mac_white_plus', displayName: 'Akko PC75B Plus+ (Mac, White)', matrix: PC75B_MAC_MATRIX, logo: false },
+  { ids: [594], name: 'yc300_pc75_s_plus', displayName: 'Akko PC75B Plus+', matrix: PC75B_MATRIX, logo: true, colourCodes: PLUS_PLUS_COLOURS },
+  { ids: [695], name: 'yc300_pc75_s_white_plus', displayName: 'Akko PC75B Plus+ (White)', matrix: PC75B_MATRIX, logo: true, colourCodes: PLUS_PLUS_COLOURS },
+  { ids: [658], name: 'yc300_pc75_s_mac_white_plus', displayName: 'Akko PC75B Plus+ (Mac, White)', matrix: PC75B_MAC_MATRIX, logo: true, colourCodes: PLUS_PLUS_COLOURS },
+  { ids: [1374], name: 'yc300_pc75_s_mac_white_plus', displayName: 'Akko PC75B Plus+ (Mac, White)', matrix: PC75B_MAC_MATRIX, logo: false, colourCodes: PLUS_PLUS_COLOURS },
 ].map((m) => ({ ...COMMON, ...m }));
 
 export const FALLBACK_MODEL = {

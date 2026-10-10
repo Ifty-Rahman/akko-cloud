@@ -53,8 +53,10 @@ const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyb
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
 
 const MAXSPEED = 4;
-const DAZZLE = 8; // rainbow colour cycling
-const NORMAL = 7; // use the RGB bytes
+// Colour-mode nibble (low 4 bits of the option byte). The vendor driver uses
+// 8 = rainbow, 7 = the RGB bytes; the PC75B Plus+ firmware was observed to use
+// them the other way round, so models can override this (see models.js).
+export const VENDOR_COLOUR_CODES = { rainbow: 8, solid: 7 };
 const WAVEOP = { right: 0, left: 1, down: 2, up: 3 };
 const MP = { upright: 0, separate: 1, intersect: 2 };
 const USEROP = { 1: 0, 2: 16, 3: 32, 4: 48, 5: 64, 6: 80, 7: 96, 8: 112, 9: 128, 10: 144 };
@@ -111,6 +113,7 @@ export class Keyboard {
     this.queue = Promise.resolve();
     this.battery = undefined; // only known over the 2.4 GHz receiver
     this.rxPace = rxPace; // 1 = vendor timing; tests pass a small factor
+    this.colourCodes = VENDOR_COLOUR_CODES; // set per model after identification
   }
 
   // Serialise all device traffic.
@@ -364,8 +367,8 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- lighting
-  static encodeLight(cmd, l, invertSpeed) {
-    const y = l.dazzle ? DAZZLE : NORMAL;
+  static encodeLight(cmd, l, invertSpeed, codes = VENDOR_COLOUR_CODES) {
+    const y = l.dazzle ? codes.rainbow : codes.solid;
     const c = l.dazzle ? 0 : 4;
     let n = 0;
     let o = 0;
@@ -424,7 +427,7 @@ export class Keyboard {
     return a;
   }
 
-  static decodeLight(a, invertSpeed) {
+  static decodeLight(a, invertSpeed, codes = VENDOR_COLOUR_CODES) {
     const n = a[1];
     const o = invertSpeed ? MAXSPEED - a[2] : a[2];
     const u = a[3];
@@ -433,8 +436,8 @@ export class Keyboard {
     if (rgb === WHITE_SUBSTITUTE) rgb = 0xffffff;
     const y = i >> 4;
     const c = i & 15;
-    if (c !== DAZZLE && c !== NORMAL && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
-    const dazzle = c === DAZZLE;
+    if (c !== codes.rainbow && c !== codes.solid && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
+    const dazzle = c === codes.rainbow;
     const base = { value: u, speed: o, rgb, dazzle };
     const pick = (a0, a1) => (y === 0 ? a0 : a1);
     switch (n) {
@@ -469,19 +472,19 @@ export class Keyboard {
   }
 
   getLight() {
-    return this.exclusive(async () => Keyboard.decodeLight(await this.query([CMD.GET_LEDPARAM]), true));
+    return this.exclusive(async () => Keyboard.decodeLight(await this.query([CMD.GET_LEDPARAM]), true, this.colourCodes));
   }
 
   setLight(l) {
     return this.exclusive(async () => {
-      await this.write(Keyboard.encodeLight(CMD.SET_LEDPARAM, l, true), Checksum.BIT8, 500);
+      await this.write(Keyboard.encodeLight(CMD.SET_LEDPARAM, l, true, this.colourCodes), Checksum.BIT8, 500);
       await sleep(500);
     });
   }
 
   // Logo/side LED ("SLED"): own mode numbering, speed is not inverted.
-  static encodeLogoLight(l) {
-    const y = l.dazzle ? DAZZLE : NORMAL;
+  static encodeLogoLight(l, codes = VENDOR_COLOUR_CODES) {
+    const y = l.dazzle ? codes.rainbow : codes.solid;
     const v = l.value ?? 4;
     const sp = l.speed ?? 2;
     let n = 0;
@@ -507,17 +510,17 @@ export class Keyboard {
     return a;
   }
 
-  static decodeLogoLight(a) {
+  static decodeLogoLight(a, codes = VENDOR_COLOUR_CODES) {
     const [, n, o, u, i] = a;
     let rgb = (a[5] << 16) | (a[6] << 8) | a[7];
     if (rgb === WHITE_SUBSTITUTE) rgb = 0xffffff;
     const c = i & 15;
     const y = i >> 4;
-    if (c !== DAZZLE && c !== NORMAL && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
-    const base = { value: u, speed: o, rgb, dazzle: c === DAZZLE };
+    if (c !== codes.rainbow && c !== codes.solid && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
+    const base = { value: u, speed: o, rgb, dazzle: c === codes.rainbow };
     switch (n) {
       case 0: return { type: 'LightOff' };
-      case 1: return { type: 'LightAlwaysOn', value: u, rgb, dazzle: c === DAZZLE };
+      case 1: return { type: 'LightAlwaysOn', value: u, rgb, dazzle: c === codes.rainbow };
       case 2: return { type: 'LightBreath', ...base };
       case 3: return { type: 'LightNeon', value: u, speed: o };
       case 4: return { type: 'LightWave', ...base, option: keyOf(WAVEOP, y) ?? 'right' };
@@ -527,12 +530,12 @@ export class Keyboard {
   }
 
   getLogoLight() {
-    return this.exclusive(async () => Keyboard.decodeLogoLight(await this.query([CMD.GET_SLEDPARAM])));
+    return this.exclusive(async () => Keyboard.decodeLogoLight(await this.query([CMD.GET_SLEDPARAM]), this.colourCodes));
   }
 
   setLogoLight(l) {
     return this.exclusive(async () => {
-      await this.write(Keyboard.encodeLogoLight(l), Checksum.BIT8, 500);
+      await this.write(Keyboard.encodeLogoLight(l, this.colourCodes), Checksum.BIT8, 500);
       await sleep(500);
     });
   }
@@ -626,6 +629,11 @@ export class Keyboard {
       for (let p = 0; p < 4; p++) out.set(await this.query([CMD.GET_MACRO, index, p]), p * 64);
       return out;
     });
+  }
+
+  // First page only: enough to tell whether a slot holds a macro.
+  getMacroHead(index) {
+    return this.exclusive(() => this.query([CMD.GET_MACRO, index, 0]));
   }
 
   async getMacro(index) {

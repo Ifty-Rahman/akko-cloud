@@ -308,3 +308,17 @@ test('keycaps: icons for media/brightness, combo icon + pop-up keys, friendly un
   }
   for (const n of ['volUp', 'volDown', 'brightUp', 'brightDown', 'combo', 'sparkle', 'knob', 'rotateLeft', 'rotateRight', 'knobPress']) assert.ok(icon(n).startsWith('<svg'), n);
 });
+
+test('colour mode codes: PC75B Plus+ uses 7 = rainbow, 8 = solid; others keep vendor 8/7', () => {
+  const plusPlus = MODELS.find((m) => m.ids.includes(594)).colourCodes;
+  assert.deepEqual(plusPlus, { rainbow: 7, solid: 8 });
+  const rb = Keyboard.encodeLight(7, { type: 'LightAlwaysOn', value: 4, rgb: 0x00ff00, dazzle: true }, true, plusPlus);
+  const solid = Keyboard.encodeLight(7, { type: 'LightAlwaysOn', value: 4, rgb: 0x00ff00, dazzle: false }, true, plusPlus);
+  assert.equal(rb[4] & 15, 7);
+  assert.equal(solid[4] & 15, 8);
+  assert.equal(Keyboard.decodeLight(rb, true, plusPlus).dazzle, true);
+  assert.equal(Keyboard.decodeLight(solid, true, plusPlus).rgb, 0x00ff00);
+  assert.equal(Keyboard.encodeLogoLight({ type: 'LightBreath', value: 4, speed: 2, rgb: 0xff0000, dazzle: true }, plusPlus)[4] & 15, 7);
+  assert.equal(MODELS.find((m) => m.ids.includes(413)).colourCodes, undefined); // vendor default
+  assert.equal(Keyboard.encodeLight(7, { type: 'LightAlwaysOn', value: 4, rgb: 1, dazzle: true }, true)[4] & 15, 8);
+});

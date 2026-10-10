@@ -138,8 +138,8 @@ async function connect(transport) {
       const el = $('#busyText');
       if (asleep) {
         busyLabel = el.textContent;
-        el.textContent = 'Keyboard is asleep — press any key on it to wake it…';
-        if ($('#busy').hidden) toast('Keyboard is asleep — press any key on it', true);
+        el.textContent = 'Keyboard not answering — press any key on it. If its green LED keeps blinking, switch it off and on.';
+        if ($('#busy').hidden) toast('Keyboard not answering — press any key on it', true);
       } else if (busyLabel) el.textContent = busyLabel;
     };
     const id = await kb.getDeviceId();

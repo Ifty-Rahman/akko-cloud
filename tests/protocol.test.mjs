@@ -574,3 +574,24 @@ test('2.4 GHz receiver: the app is told when the keyboard answers slowly, and wh
   await kb.getProfile(); // after a key press: quick
   assert.deepEqual(events, [true, false]);
 });
+
+// macOS: the first read right after a request can still return the previous reply
+class MacLikeReceiver extends FakeReceiver {
+  constructor() { super(); this.prev = new Uint8Array(64); this.stale = 0; }
+  async sendFeature(d) {
+    const before = Uint8Array.from(this.out);
+    await super.sendFeature(d);
+    if (d[0] === 0xfb || d[0] === 0xfd) { this.prev = before; this.stale = 1; }
+  }
+  async receiveFeature() {
+    if (this.stale > 0) { this.stale--; const o = new Uint8Array(64); o.set(this.prev.slice(0, 64)); return o; }
+    return super.receiveFeature();
+  }
+}
+
+test('2.4 GHz receiver on macOS: a stale reply to the link check is read again, not taken as "no keyboard paired"', async () => {
+  const rx = new MacLikeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.deepEqual(await kb.getLinkStatus(), { linked: true, battery: 66 });
+});

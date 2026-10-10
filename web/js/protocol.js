@@ -49,6 +49,8 @@ export const RX = {
 export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
+const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before reading a reply
+const RX_REREAD_MS = 15; // gap before reading a stale receiver reply again
 const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
 const SETTLE_MS = 1000; // online this long after a wake before the first command
@@ -168,9 +170,29 @@ export class Keyboard {
   // ---- 2.4 GHz receiver handshake ------------------------------------------
   // Status [FB] -> d[0] is_ready_read, d[1] battery %, d[2] 0 = keyboard online,
   // d[3] is_write_finish (field names from the vendor helper's DangleCommonStatus).
+  // One request to the receiver itself ([FB] status, [FD] link check). The
+  // vendor helper waits 10 ms before reading any reply (get_feature). On macOS
+  // the receiver was seen answering an [FD] read 2 ms after the request with
+  // its previous [FB] reply, so the link check failed ("no keyboard paired")
+  // although the keyboard was connected. Wait like the vendor, and re-read
+  // (the request is to the receiver only, so asking again is harmless) while
+  // the reply is plainly still the previous one.
+  async rxRequest(cmd, isFresh) {
+    let r;
+    for (let ask = 0; ask < 2; ask++) {
+      await this.rawSend([cmd]);
+      for (let read = 0; read < 3; read++) {
+        await this.rxPoll(read ? RX_REREAD_MS : RX_REPLY_DELAY_MS);
+        r = await this.rawRecv();
+        if (isFresh(r)) return r;
+      }
+    }
+    return r;
+  }
+
   async rxStatus() {
-    await this.rawSend([RX.STATUS]);
-    const d = await this.rawRecv();
+    // a status reply never starts with the link check's AA 55
+    const d = await this.rxRequest(RX.STATUS, (r) => !(r[0] === 0xaa && r[1] === 0x55));
     const s = { readyRead: d[0] === 1, battery: d[1], online: d[2] === 0, writeFinish: d[3] === 1, raw: d };
     if (s.online) this.battery = s.battery;
     return s;
@@ -234,8 +256,7 @@ export class Keyboard {
 
   // [FD] -> AA 55 01 while a keyboard is paired with the receiver.
   async rxLinked() {
-    await this.rawSend([RX.IS24]);
-    const r = await this.rawRecv();
+    const r = await this.rxRequest(RX.IS24, (x) => x[0] === 0xaa && x[1] === 0x55);
     return r[0] === 0xaa && r[1] === 0x55 && r[2] === 1;
   }
 
@@ -357,12 +378,10 @@ export class Keyboard {
   // Receiver-level status: { linked, battery } (dongle only).
   getLinkStatus() {
     return this.exclusive(async () => {
-      await this.rawSend([RX.IS24]);
-      const r = await this.rawRecv();
-      await this.rawSend([RX.STATUS]);
-      const st = await this.rawRecv();
-      this.battery = st[1];
-      return { linked: r[0] === 0xaa && r[1] === 0x55 && r[2] === 1, battery: st[1] };
+      const linked = await this.rxLinked();
+      const st = await this.rxStatus();
+      this.battery = st.battery;
+      return { linked, battery: st.battery };
     });
   }
 

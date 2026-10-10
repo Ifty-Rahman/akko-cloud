@@ -342,6 +342,7 @@ function selectTab(name) {
   $$('#tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
   $$('.tab-panel').forEach((p) => (p.hidden = p.dataset.panel !== name));
   if (name !== 'macros') macrosView.stop();
+  if (name === 'log') renderLog(); // always show the latest packets
   if (name === 'macros') {
     macrosView.render(); // the library is local: nothing to read from the keyboard
     return;
@@ -763,12 +764,16 @@ function renderEditor() {
 }
 
 $('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', async () => {
-  // macros first, so a key never points at a slot that is not written yet
+  // Like the vendor app (setKeyConfig), every library macro this layer's keys
+  // use is written before the key map, not just newly assigned ones, so the
+  // keyboard's copy always matches the library. Macros that exist only on the
+  // keyboard (not in the library) are left as they are.
   const used = new Set();
   for (let i = 0; i < 128; i++) if (S.work[i * 4] === 9) used.add(S.work[i * 4 + 2]);
-  for (const [s, id] of S.pendingMacros) {
+  for (const s of [...used].sort((a, b) => a - b)) {
+    const id = macroIdOnSlot(s);
     const m = libMacro(id);
-    if (!m || !used.has(s)) continue;
+    if (!m) continue;
     $('#busyText').textContent = `Writing macro “${m.name}”…`;
     await writeMacroToKeyboard(m, s);
     const map = slotMap();

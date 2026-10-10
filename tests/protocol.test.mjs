@@ -542,3 +542,22 @@ test('2.4 GHz receiver: a keyboard that goes quiet mid-command and comes back fi
   assert.equal(rx.kbSends, 1, 'the query was sent once');
   assert.deepEqual(events, [true, false], 'the "press any key" banner was shown while it was quiet');
 });
+
+test('2.4 GHz receiver: one slow reply gives one rest, not a rest after every command', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const send = rx.sendFeature.bind(rx);
+  let slow = true;
+  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f && slow) { slow = false; rx.pending = 15; } }; // answers, but slowly
+  globalThis.setTimeout = realSetTimeout; // real timers: the rest must take real time
+  try {
+    await kb.getDeviceId(); // slow reply
+    assert.ok(kb.coolDown > 0, 'rest scheduled after the slow reply');
+    await kb.getProfile(); // quick reply, after the rest
+    assert.equal(kb.coolDown, 0, 'the rest itself does not count as a slow reply');
+    await kb.getProfile();
+    assert.equal(kb.coolDown, 0);
+  } finally {
+    globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
+  }
+});

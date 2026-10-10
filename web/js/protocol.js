@@ -275,7 +275,6 @@ export class Keyboard {
   // the keyboard has not finished the previous exchange: piling commands onto
   // a busy keyboard was what made it drop off the receiver (green LED blinking).
   async sendDongle(data, expectReply) {
-    const started = Date.now();
     // Sustained traffic tires the keyboard: replies take longer and longer
     // until it drops off the receiver. Rest restores it (on a PC75B Plus+:
     // full loads 10 s apart slowed 0.36 -> 0.76 s per command; 60 s apart they
@@ -285,6 +284,9 @@ export class Keyboard {
       await this.rxPoll(this.coolDown);
       this.coolDown = 0;
     }
+    // timed after the rest: counting the rest as a slow reply made every rest
+    // trigger the next one (5 s after every command)
+    const started = Date.now();
     this.lastPolls = 0;
     await this.rxPoll(RX_POLL_MS); // wait_fb_write_finish starts with a 100 ms sleep
     const s = await this.ensureAwake();

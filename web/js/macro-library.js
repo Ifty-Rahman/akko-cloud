@@ -33,6 +33,14 @@ export function saveLibrary(lib) {
 
 export const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
 
+// Name for a new item: numbered after how many items there already are
+// (3 macros -> "Macro_4"), skipping numbers that are taken, so a deleted
+// macro's name is never handed to the next one.
+export function nextName(names, base) {
+  const taken = new Set(names);
+  for (let i = names.length + 1; ; i++) if (!taken.has(`${base}_${i}`)) return `${base}_${i}`;
+}
+
 export function uniqueName(names, base) {
   const taken = new Set(names);
   for (let i = 1; ; i++) if (!taken.has(`${base}_${i}`)) return `${base}_${i}`;

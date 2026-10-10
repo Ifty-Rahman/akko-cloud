@@ -2,7 +2,7 @@
 // tiles (right), modelled on the vendor driver's macro page.
 
 import {
-  MODES, loadLibrary, saveLibrary, newId, uniqueName, validateMacro, finalizeMacro, mergeDelays,
+  MODES, loadLibrary, saveLibrary, newId, uniqueName, nextName, validateMacro, finalizeMacro, mergeDelays,
   macroSize, exportMacroJSON, parseMacroJSON, loadSlotMap, saveSlotMap, macroIdForSlot,
 } from './macro-library.js';
 import { MACRO_LIMIT, CODE_TO_HID, hidName, SHORT_NAMES } from './codec.js';
@@ -59,14 +59,14 @@ export function createMacrosView(d) {
   function newMacro(folderId = null) {
     if (!confirmDiscard()) return;
     stopRecording();
-    const m = { id: newId(), name: uniqueName(V.lib.macros.map((x) => x.name), 'Macro'), folderId, mode: 'repeat_times', repeat: 1, events: [], updated: Date.now() };
+    const m = { id: newId(), name: nextName(V.lib.macros.map((x) => x.name), 'Macro'), folderId, mode: 'repeat_times', repeat: 1, events: [], updated: Date.now() };
     V.lib.macros.push(m);
     persist();
     select(m.id, true);
   }
 
   function newFolder() {
-    const name = uniqueName(V.lib.folders.map((f) => f.name), 'Folder');
+    const name = nextName(V.lib.folders.map((f) => f.name), 'Folder');
     V.lib.folders.push({ id: newId(), name, open: true });
     persist();
     renderLib();

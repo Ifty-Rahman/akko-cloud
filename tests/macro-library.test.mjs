@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  validateMacro, finalizeMacro, mergeDelays, heldKeys, allocateSlot, macroIdForSlot, uniqueName, exportMacroJSON, parseMacroJSON,
+  validateMacro, finalizeMacro, mergeDelays, heldKeys, allocateSlot, macroIdForSlot, uniqueName, nextName, exportMacroJSON, parseMacroJSON,
 } from '../web/js/macro-library.js';
 import { encodeMacro, decodeMacro } from '../web/js/codec.js';
 
@@ -37,6 +37,10 @@ test('slots: reuse, lowest free, skip slots used by keys, error when full', () =
 
 test('names and import/export', () => {
   assert.equal(uniqueName(['Macro_1', 'Macro_2'], 'Macro'), 'Macro_3');
+  // new macros are numbered after how many there are; a deleted name is not reused
+  assert.equal(nextName([], 'Macro'), 'Macro_1');
+  assert.equal(nextName(['Keyboard macro 1', 'Macro_2', 'Macro_3'], 'Macro'), 'Macro_4');
+  assert.equal(nextName(['Macro_2', 'Macro_3'], 'Macro'), 'Macro_4', 'skips taken numbers');
   const m = { name: 'Copy', mode: 'on_off', repeat: 1, events: [down(224), down(6), wait(10), up(6), up(224)] };
   assert.deepEqual(parseMacroJSON(exportMacroJSON(m)), [m]);
   assert.throws(() => parseMacroJSON('{"x":1}'), /Not an Akko Cloud macro/);

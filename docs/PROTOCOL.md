@@ -69,7 +69,7 @@ device table.
 | 413, 281 | PC75B Plus (`yc200_pc75b`) |
 | 594 | PC75B Plus+ |
 | 695 | PC75B Plus+ White |
-| 658, 1374 | PC75B Plus+ Mac White (1374: no logo LED) |
+| 658, 1374 | PC75B Plus+ Mac White (1374: no LED strip) |
 
 ## Commands
 
@@ -80,11 +80,11 @@ device table.
 | 0x02 | SET_RESET | `[02]` BIT7 | factory reset |
 | 0x05 / 0x85 | profile | `[05, p]` BIT7 / `[85]` | `d[1]` = active profile (0–3) |
 | 0x04 / 0x84 | report rate | `[04, p, code]` BIT7 / `[84, p]` | code 1=1000, 2=500, 4=250, 8=125 Hz |
-| 0x06 / 0x86 | keyboard options | `[06, p, flags, fnMatrix, powerSave]` BIT7 | flags: b0 Win lock, b1 Mac mode (read-only from the app's view), b3 WASD↔arrows, b4 LED off, b5 logo LED off, b6/b7 unlabeled |
+| 0x06 / 0x86 | keyboard options | `[06, p, flags, fnMatrix, powerSave]` BIT7 | flags: b0 Win lock, b1 Mac mode (read-only from the app's view), b3 WASD↔arrows, b4 LED off, b5 LED-strip off, b6/b7 unlabeled |
 | 0x11 / 0x91 | debounce | `[11, 0, v]` BIT7 | `d[2]`, UI range 1–10 |
 | 0x12 / 0x92 | sleep timers | write `u16le` at d[8..15]: BT, 2.4G, deep BT, deep 2.4G (seconds, 0 = never) | read: the same four values at d[1..8] |
 | 0x07 / 0x87 | main LED | `[07, mode, 4−speed, brightness, opt, R, G, B]` **BIT8** | see below |
-| 0x08 / 0x88 | logo LED | `[08, mode, speed, brightness, opt, R, G, B]` **BIT8** | modes 0 off, 1 static, 2 breath, 3 neon, 4 wave, 5 snake |
+| 0x08 / 0x88 | LED strip ("SLED") | `[08, mode, speed, brightness, opt, R, G, B]` **BIT8** | modes 0 off, 1 static, 2 breath, 3 neon, 4 wave, 5 snake |
 | 0x09 / 0x89 | key matrix | 9 pages `[09, profile, F8, 01, page, 0, 0, csum] + 56 B` | read 8 × `[89, profile, page]` → 512 B |
 | 0x10 / 0x90 | Fn matrix | 9 pages `[10, fn, F8, 01, page, 0, 0, csum] + 56 B` | 2 Fn layers |
 | 0x0B / 0x8B | macro | 5 pages `[0B, idx, 0, 1, page, 0, 0, BIT7] + 56 B` | read 4 × `[8B, idx, page]` → 256 B |
@@ -105,7 +105,19 @@ Keyboard replies are not returned directly.
 | `[FC]` | the keyboard's 64-byte reply to the last query | fetch reply |
 | `[FE, n]` | – | announce the length of the next streamed packet (music/screen) |
 
+* **Order per command** (the helper's `send_msg`): `[FD]` link check → wait
+  until `[FB]` shows the previous write finished → send → `[FD]` → poll `[FB]`
+  (`wait_fb_write_finish`: at most 15 polls, 100 ms apart). On a timeout the
+  helper reports an error; it never sends the command again. Re-sending to a
+  keyboard that had not confirmed the first copy was seen to make it drop off
+  the receiver (green LED blinking, power cycle needed).
 * **Writes**: send → poll `[FB]` until `d[3] = 1`. A write never sets `d[0]`.
+* **Replies can be wrong although `d[0]` said ready**: about one 64-byte page in
+  40 came back with a 16-byte block of zeros or another page's data (keys
+  12–15 of a key map read as disabled). Akko Cloud compares each page with the
+  last known contents (cached map, or the data just written) and re-reads any
+  page that differs until two reads agree. In 10 key-map reads on a PC75B Plus+
+  this caught 2 bad pages, and all 10 results were correct.
 * **Queries**: send → poll until `d[0] = 1` → `[FC]` → read the reply.
 * `d[2] = 1` means the keyboard is asleep (its 2.4 GHz sleep timer) or out of
   range. The receiver cannot wake it; a key press on the keyboard does. The
@@ -166,12 +178,12 @@ move (followed by `dx, dy`). In the flags byte, bit 7 means "key down" and bits
 
 * Rebuilt packets were compared byte for byte against the **original vendor
   JavaScript**, executed in isolation. The comparison covered 3000 random
-  macros (encode and decode), 4000 main-LED packets, 2000 logo-LED packets and
+  macros (encode and decode), 4000 main-LED packets, 2000 LED-strip packets and
   200 sleep packets, with 0 mismatches.
 * Checksums, the model-id probe and the report framing come from disassembly of
   the Rust helper (Windows i686 and macOS x86_64 builds).
 * End-to-end checks on a real PC75B Plus+ (USB and 2.4 GHz receiver) using the
-  same `Keyboard` class: model id, firmware, battery, lighting, logo LED, options,
+  same `Keyboard` class: model id, firmware, battery, lighting, LED strip, options,
   polling rate, debounce, sleep timers, the full key matrix (user remaps decoded
   correctly), a stored macro, and a full 9-page key-matrix write with
   byte-identical read-back over the receiver.

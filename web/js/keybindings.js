@@ -21,11 +21,11 @@ export const KEYBINDING_SECTIONS = [
     ],
   },
   {
-    title: 'PC case light (RGB strip)',
+    title: 'LED Strip',
     rows: [
-      [['Fn', 'Z'], 'Case light brightness'],
-      [['Fn', 'X'], 'Case light animation speed'],
-      [['Fn', 'Left Ctrl'], 'Case light effect'],
+      [['Fn', 'Z'], 'LED strip brightness'],
+      [['Fn', 'X'], 'LED strip animation speed'],
+      [['Fn', 'Left Ctrl'], 'LED strip effect'],
     ],
   },
   {

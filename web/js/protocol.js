@@ -51,10 +51,31 @@ export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
 const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
+const SETTLE_MS = 1000; // online this long after a wake before the first command
+const SETTLE_MAX_MS = 8000;
+const RX_MAX_POLLS = 15;
+const RX_SLOW_POLL_MS = 500; // after the vendor's 15 polls, keep waiting at this pace
+const RX_SLOW_POLLS = 7; // ... this many times (about 5 s in all)
+// polls a command needed (write finished + reply ready); a rested keyboard
+// needs few, a tiring one many
+const TIRED_POLLS = 4; // provisional: tuned from real-keyboard traces
+const SLOW_POLLS = 10;
+const COOL_DOWN_MS = 500;
+const COOL_DOWN_LONG_MS = 1500;
+const COOL_DOWN_MAX_MS = 5000;
+const SLOW_COMMAND_MS = 1000; // a rested keyboard answers in ~0.4 s // vendor: wait_fb_write_finish gives up after 15 polls
+
+const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz (Fn + Y), or hold Fn + Y to pair it again.';
+const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
+const NOT_ANSWERED = 'The keyboard did not answer over the 2.4 GHz receiver. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
+const INCONSISTENT_REPLY = 'The keyboard’s replies over the 2.4 GHz receiver did not agree, so nothing was changed. Try again, or use the USB cable.';
+const NOT_CONFIRMED = 'The keyboard did not confirm the change over the 2.4 GHz receiver, so it may not have been saved. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
 
 const MAXSPEED = 4;
-const DAZZLE = 8; // rainbow colour cycling
-const NORMAL = 7; // use the RGB bytes
+// Colour-mode nibble (low 4 bits of the option byte). The vendor driver uses
+// 8 = rainbow, 7 = the RGB bytes; the PC75B Plus+ firmware was observed to use
+// them the other way round, so models can override this (see models.js).
+export const VENDOR_COLOUR_CODES = { rainbow: 8, solid: 7 };
 const WAVEOP = { right: 0, left: 1, down: 2, up: 3 };
 const MP = { upright: 0, separate: 1, intersect: 2 };
 const USEROP = { 1: 0, 2: 16, 3: 32, 4: 48, 5: 64, 6: 80, 7: 96, 8: 112, 9: 128, 10: 144 };
@@ -64,12 +85,21 @@ const WHITE_SUBSTITUTE = 0xfafffa; // the driver never sends pure white
 const RATE_CODES = { 1000: 1, 500: 2, 250: 4, 125: 8 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const keyOf = (obj, v) => Object.keys(obj).find((k) => obj[k] === v);
 
 export class KeyboardAsleepError extends Error {
   constructor() {
     super('The keyboard is not answering. Press any key on it; if its green LED keeps blinking, switch it off and on again.');
     this.name = 'KeyboardAsleepError';
+  }
+}
+
+export class IncompleteWriteError extends Error {
+  constructor(what, cause) {
+    super(`Writing the ${what} did not finish${cause ? ` (${cause.message.replace(/\.$/, '')})` : ''}. Some keys may not work until it is written again. Your changes are kept: press “Write to keyboard” again, ideally over the USB cable.`);
+    this.name = 'IncompleteWriteError';
+    this.cause = cause;
   }
 }
 
@@ -111,6 +141,7 @@ export class Keyboard {
     this.queue = Promise.resolve();
     this.battery = undefined; // only known over the 2.4 GHz receiver
     this.rxPace = rxPace; // 1 = vendor timing; tests pass a small factor
+    this.colourCodes = VENDOR_COLOUR_CODES; // set per model after identification
   }
 
   // Serialise all device traffic.
@@ -158,17 +189,18 @@ export class Keyboard {
   async ensureAwake(timeoutMs = 60000) {
     const t0 = Date.now();
     let s = await this.rxStatus();
+    if (s.online) return s;
     while (!s.online && Date.now() - t0 < OFFLINE_GRACE_MS * this.rxPace) {
       await this.rxPoll(RX_POLL_MS);
       s = await this.rxStatus();
     }
-    if (s.online) return s;
+    if (s.online) return this.settle(s);
     this.onAsleep?.(true);
     try {
       while (Date.now() - t0 < timeoutMs) {
         await this.rxPoll(RX_ASLEEP_POLL_MS);
         s = await this.rxStatus();
-        if (s.online) return s;
+        if (s.online) return await this.settle(s);
       }
     } finally {
       this.onAsleep?.(false);
@@ -176,38 +208,127 @@ export class Keyboard {
     throw new KeyboardAsleepError();
   }
 
-  // Wait until the receiver confirms delivery (and, for queries, that the reply arrived).
-  async waitDelivered(expectReply, timeoutMs = 3000) {
+  // Right after the keyboard wakes or re-links, commands were seen to take
+  // seconds and then stall, dropping it off the receiver again. Wait until it
+  // has reported online for a moment before talking to it.
+  async settle(s) {
     const t0 = Date.now();
-    let sawPending = false;
+    let since = Date.now();
+    while (Date.now() - since < SETTLE_MS * this.rxPace && Date.now() - t0 < SETTLE_MAX_MS * this.rxPace) {
+      await this.rxPoll(RX_POLL_MS);
+      s = await this.rxStatus();
+      if (!s.online) since = Date.now();
+    }
+    return s;
+  }
+
+  // Tells the app when the keyboard is answering slowly (or fast again).
+  // Measured on a PC75B Plus+: without recent key presses it drifts into a
+  // power-saving state (replies take seconds, sometimes it stops); right after
+  // a key press every reply came on the first poll (~0.4 s per command).
+  setSlow(slow) {
+    if (this.slow === slow) return;
+    this.slow = slow;
+    this.onSlow?.(slow);
+  }
+
+  // [FD] -> AA 55 01 while a keyboard is paired with the receiver.
+  async rxLinked() {
+    await this.rawSend([RX.IS24]);
+    const r = await this.rawRecv();
+    return r[0] === 0xaa && r[1] === 0x55 && r[2] === 1;
+  }
+
+  // The vendor helper's wait_fb_write_finish / read_msg loops: at most
+  // RX_MAX_POLLS polls of [FB], 100 ms apart, until `ready(status)`.
+  async pollUntil(ready) {
     let offlineSince = null;
-    await this.rxPoll(50);
-    while (Date.now() - t0 < timeoutMs * this.rxPace) {
-      const s = await this.rxStatus();
+    // the vendor's 15 polls 100 ms apart, then a few slower ones (~5 s in all).
+    // Waiting sends nothing to the keyboard, so it is always safe: the first
+    // replies after a restart or wake were seen to take over 1.5 s.
+    // polls made while the keyboard is offline don't use up the budget; the
+    // offline time itself is bounded by the grace period and ensureAwake
+    for (let i = 0; i < RX_MAX_POLLS + RX_SLOW_POLLS; i++) {
+      // past the vendor's 15 quick polls (~1.5 s) the keyboard is in its slow,
+      // power-saving state; a key press on it switches it back to full speed
+      if (i === RX_MAX_POLLS) this.setSlow(true);
+      await this.rxPoll(i < RX_MAX_POLLS ? RX_POLL_MS : RX_SLOW_POLL_MS);
+      let s = await this.rxStatus();
       if (!s.online) {
         offlineSince ??= Date.now();
-        if (Date.now() - offlineSince >= OFFLINE_GRACE_MS * this.rxPace) return 'offline';
-      } else {
+        i--; // offline polls are not counted against the reply budget
+        if (Date.now() - offlineSince < OFFLINE_GRACE_MS * this.rxPace) continue;
+        // A tired keyboard can go quiet mid-exchange and come back by itself a
+        // few seconds later (or after a key press). Waiting sends nothing, so
+        // wait for it (ensureAwake shows the "press any key" banner meanwhile)
+        // and then keep waiting for the reply instead of failing.
+        this.onNote?.('keyboard went quiet mid-exchange; waiting for it');
+        try {
+          s = await this.ensureAwake();
+        } catch {
+          return 'offline';
+        }
         offlineSince = null;
-        const done = expectReply ? s.readyRead : s.writeFinish;
-        if (!done) sawPending = true;
-        else if (sawPending || Date.now() - t0 > 150 * this.rxPace) return 'ok';
       }
-      await this.rxPoll(RX_POLL_MS);
+      offlineSince = null;
+      if (ready(s)) {
+        this.lastPolls = (this.lastPolls ?? 0) + i + 1;
+        return 'ok';
+      }
     }
+    this.lastPolls = (this.lastPolls ?? 0) + RX_MAX_POLLS + RX_SLOW_POLLS;
     return 'timeout';
   }
 
+  // One command over the receiver, exactly in the vendor helper's order.
+  //   send_msg:  [FD], wait until the previous exchange finished (is_write_finish),
+  //              send, [FD], wait for is_write_finish.
+  //   read_msg (queries only): [FD], wait for is_ready_read, then fetch ([FC]).
+  // Like the vendor, a command is never sent twice, and nothing is sent while
+  // the keyboard has not finished the previous exchange: piling commands onto
+  // a busy keyboard was what made it drop off the receiver (green LED blinking).
   async sendDongle(data, expectReply) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt) await this.rxPoll(1000); // back off before a single retry
-      await this.ensureAwake();
-      this.log('→', data);
-      await this.t.sendFeature(data);
-      const r = await this.waitDelivered(expectReply);
-      if (r === 'ok') return;
+    // Sustained traffic tires the keyboard: replies take longer and longer
+    // until it drops off the receiver. Rest restores it (on a PC75B Plus+:
+    // full loads 10 s apart slowed 0.36 -> 0.76 s per command; 60 s apart they
+    // stayed at 0.36 s). So when a command was slow, give it a break first.
+    if (this.coolDown) {
+      this.onNote?.(`resting ${this.coolDown} ms (the keyboard answered slowly)`);
+      await this.rxPoll(this.coolDown);
+      this.coolDown = 0;
     }
-    throw new Error('The keyboard did not confirm the command over the 2.4 GHz receiver. If its green LED is blinking it lost the receiver: switch it off and on, or use the USB cable.');
+    // timed after the rest: counting the rest as a slow reply made every rest
+    // trigger the next one (5 s after every command)
+    const started = Date.now();
+    this.lastPolls = 0;
+    await this.rxPoll(RX_POLL_MS); // wait_fb_write_finish starts with a 100 ms sleep
+    const s = await this.ensureAwake();
+    if (!(await this.rxLinked())) throw new Error(NOT_LINKED);
+    if (!s.writeFinish) {
+      const r = await this.pollUntil((x) => x.writeFinish);
+      if (r !== 'ok') this.onNote?.(`not sent: previous exchange never finished (${r})`);
+      if (r === 'offline') throw new KeyboardAsleepError();
+      if (r !== 'ok') throw new Error(STILL_BUSY);
+    }
+    this.lastPolls = 0;
+    this.log('→', data);
+    await this.t.sendFeature(data);
+    await this.rxLinked();
+    let r = await this.pollUntil((x) => x.writeFinish);
+    if (r === 'ok' && expectReply) {
+      await sleep(10);
+      await this.rxLinked();
+      r = await this.pollUntil((x) => x.readyRead);
+    }
+    // the more slowly the keyboard answered, the longer it rests
+    const took = (Date.now() - started) / this.rxPace;
+    this.coolDown = r !== 'ok' ? COOL_DOWN_MAX_MS
+      : took > SLOW_COMMAND_MS ? Math.min(COOL_DOWN_MAX_MS, Math.max(COOL_DOWN_LONG_MS, 2 * took))
+        : this.lastPolls > SLOW_POLLS ? COOL_DOWN_LONG_MS : this.lastPolls > TIRED_POLLS ? COOL_DOWN_MS : 0;
+    if (r === 'ok' && took < SLOW_COMMAND_MS) this.setSlow(false);
+    if (r !== 'ok') this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${Date.now() - started} ms`);
+    if (r === 'offline') throw new KeyboardAsleepError();
+    if (r !== 'ok') throw new Error(expectReply ? NOT_ANSWERED : NOT_CONFIRMED);
   }
 
   // stream=true: fire-and-forget frames (music/screen), no link handshake.
@@ -220,8 +341,16 @@ export class Keyboard {
   }
 
   async read(preDelay = 5) {
+    if (this.dongle) {
+      // vendor read_msg: 10 ms, fetch ([FC]), then 30 ms before reading the
+      // reply. Reading straight after the fetch can catch the receiver's
+      // buffer half-updated (seen as zeroed blocks or another page's data).
+      await sleep(10);
+      await this.rawSend([RX.FETCH]);
+      await sleep(30);
+      return this.rawRecv();
+    }
     await sleep(preDelay);
-    if (this.dongle) await this.rawSend([RX.FETCH]); // ask the receiver for the keyboard's reply
     return this.rawRecv();
   }
 
@@ -364,8 +493,8 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- lighting
-  static encodeLight(cmd, l, invertSpeed) {
-    const y = l.dazzle ? DAZZLE : NORMAL;
+  static encodeLight(cmd, l, invertSpeed, codes = VENDOR_COLOUR_CODES) {
+    const y = l.dazzle ? codes.rainbow : codes.solid;
     const c = l.dazzle ? 0 : 4;
     let n = 0;
     let o = 0;
@@ -424,7 +553,7 @@ export class Keyboard {
     return a;
   }
 
-  static decodeLight(a, invertSpeed) {
+  static decodeLight(a, invertSpeed, codes = VENDOR_COLOUR_CODES) {
     const n = a[1];
     const o = invertSpeed ? MAXSPEED - a[2] : a[2];
     const u = a[3];
@@ -433,8 +562,8 @@ export class Keyboard {
     if (rgb === WHITE_SUBSTITUTE) rgb = 0xffffff;
     const y = i >> 4;
     const c = i & 15;
-    if (c !== DAZZLE && c !== NORMAL && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
-    const dazzle = c === DAZZLE;
+    if (c !== codes.rainbow && c !== codes.solid && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
+    const dazzle = c === codes.rainbow;
     const base = { value: u, speed: o, rgb, dazzle };
     const pick = (a0, a1) => (y === 0 ? a0 : a1);
     switch (n) {
@@ -469,19 +598,19 @@ export class Keyboard {
   }
 
   getLight() {
-    return this.exclusive(async () => Keyboard.decodeLight(await this.query([CMD.GET_LEDPARAM]), true));
+    return this.exclusive(async () => Keyboard.decodeLight(await this.query([CMD.GET_LEDPARAM]), true, this.colourCodes));
   }
 
   setLight(l) {
     return this.exclusive(async () => {
-      await this.write(Keyboard.encodeLight(CMD.SET_LEDPARAM, l, true), Checksum.BIT8, 500);
+      await this.write(Keyboard.encodeLight(CMD.SET_LEDPARAM, l, true, this.colourCodes), Checksum.BIT8, 500);
       await sleep(500);
     });
   }
 
   // Logo/side LED ("SLED"): own mode numbering, speed is not inverted.
-  static encodeLogoLight(l) {
-    const y = l.dazzle ? DAZZLE : NORMAL;
+  static encodeLogoLight(l, codes = VENDOR_COLOUR_CODES) {
+    const y = l.dazzle ? codes.rainbow : codes.solid;
     const v = l.value ?? 4;
     const sp = l.speed ?? 2;
     let n = 0;
@@ -495,7 +624,7 @@ export class Keyboard {
       case 'LightNeon': n = 3; o = sp; u = v; break;
       case 'LightWave': n = 4; o = sp; u = v; i = ((WAVEOP[l.option] ?? WAVEOP.right) << 4) | y; break;
       case 'LightSnake': n = 5; o = sp; u = v; i = l.option === undefined || l.option === 'z' ? y : 16 | y; break;
-      default: throw new Error('unsupported logo light type ' + l.type);
+      default: throw new Error('unsupported LED strip effect ' + l.type);
     }
     const a = [CMD.SET_SLEDPARAM, n, o, u, i, 0, 0, 0];
     if (l.rgb !== undefined) {
@@ -507,17 +636,17 @@ export class Keyboard {
     return a;
   }
 
-  static decodeLogoLight(a) {
+  static decodeLogoLight(a, codes = VENDOR_COLOUR_CODES) {
     const [, n, o, u, i] = a;
     let rgb = (a[5] << 16) | (a[6] << 8) | a[7];
     if (rgb === WHITE_SUBSTITUTE) rgb = 0xffffff;
     const c = i & 15;
     const y = i >> 4;
-    if (c !== DAZZLE && c !== NORMAL && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
-    const base = { value: u, speed: o, rgb, dazzle: c === DAZZLE };
+    if (c !== codes.rainbow && c !== codes.solid && COMMONCOLOR[c] !== undefined) rgb = COMMONCOLOR[c];
+    const base = { value: u, speed: o, rgb, dazzle: c === codes.rainbow };
     switch (n) {
       case 0: return { type: 'LightOff' };
-      case 1: return { type: 'LightAlwaysOn', value: u, rgb, dazzle: c === DAZZLE };
+      case 1: return { type: 'LightAlwaysOn', value: u, rgb, dazzle: c === codes.rainbow };
       case 2: return { type: 'LightBreath', ...base };
       case 3: return { type: 'LightNeon', value: u, speed: o };
       case 4: return { type: 'LightWave', ...base, option: keyOf(WAVEOP, y) ?? 'right' };
@@ -527,12 +656,12 @@ export class Keyboard {
   }
 
   getLogoLight() {
-    return this.exclusive(async () => Keyboard.decodeLogoLight(await this.query([CMD.GET_SLEDPARAM])));
+    return this.exclusive(async () => Keyboard.decodeLogoLight(await this.query([CMD.GET_SLEDPARAM]), this.colourCodes));
   }
 
   setLogoLight(l) {
     return this.exclusive(async () => {
-      await this.write(Keyboard.encodeLogoLight(l), Checksum.BIT8, 500);
+      await this.write(Keyboard.encodeLogoLight(l, this.colourCodes), Checksum.BIT8, 500);
       await sleep(500);
     });
   }
@@ -588,10 +717,37 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- key matrices
-  async readPaged(cmd, index, pages) {
+  // Over the receiver a reply is occasionally wrong although the receiver
+  // reported it ready: a 16-byte block missing (zeros) or another page's data.
+  // Seen on a PC75B Plus+: keys 12-15 of a key-map read came back as 0 and
+  // were shown as disabled. Each page is therefore checked against `ref` (the
+  // last known contents, e.g. the cached map or the data just written): a page
+  // that matches is accepted, a page that differs is read again and accepted
+  // once two reads agree. Without `ref` every page is read twice.
+  async readPaged(cmd, index, pages, ref) {
     const out = new Uint8Array(pages * 64);
-    for (let p = 0; p < pages; p++) out.set(await this.query([cmd, index, p]), p * 64);
+    if (ref) {
+      const full = new Uint8Array(pages * 64); // model maps can be shorter than the pages read
+      full.set(Array.from(ref).slice(0, pages * 64));
+      ref = full;
+    }
+    for (let p = 0; p < pages; p++) out.set(await this.readPage(cmd, index, p, ref?.subarray(p * 64, p * 64 + 64)), p * 64);
     return out;
+  }
+
+  async readPage(cmd, index, p, want) {
+    const q = () => this.query([cmd, index, p]);
+    let page = await q();
+    if (this.dongle && !(want && sameBytes(page, want))) {
+      for (let n = 0; ; n++) {
+        const again = await q();
+        if (sameBytes(again, page)) break; // the same twice
+        page = again;
+        if (want && sameBytes(page, want)) break; // matches what we expected
+        if (n >= 2) throw new Error(INCONSISTENT_REPLY);
+      }
+    }
+    return page;
   }
 
   async writePaged(cmd, index, data, pages, gap) {
@@ -603,16 +759,43 @@ export class Keyboard {
     await sleep(gap);
   }
 
-  getKeyMatrix(profile = this.profile) {
-    return this.exclusive(() => this.readPaged(CMD.GET_KEYMATRIX, profile, 8));
+  getKeyMatrix(profile = this.profile, ref) {
+    return this.exclusive(() => this.readPaged(CMD.GET_KEYMATRIX, profile, 8, ref));
   }
 
   setKeyMatrix(matrix512, profile = this.profile) {
     return this.exclusive(() => this.writePaged(CMD.SET_KEYMATRIX, profile, matrix512, 9, 1000));
   }
 
-  getFnMatrix(fnIndex) {
-    return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8));
+  // Write, read back and compare. A paged upload that was cut off part way
+  // (link drop) or did not store correctly is redone in full once: a partial
+  // upload leaves the keys of the missing pages disabled.
+  async verifiedWrite(write, read, data, what, n = 9 * 56 /* bytes the paged upload carries */) {
+    let interrupted;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await write();
+        const back = await read();
+        if (data.slice(0, n).every((v, i) => v === back[i])) return attempt;
+        interrupted = undefined;
+      } catch (e) {
+        interrupted = e;
+        if (e instanceof KeyboardAsleepError) break; // nobody pressed a key for a minute
+      }
+    }
+    throw new IncompleteWriteError(what, interrupted);
+  }
+
+  setKeyMatrixVerified(matrix512, profile = this.profile) {
+    return this.verifiedWrite(() => this.setKeyMatrix(matrix512, profile), () => this.getKeyMatrix(profile, matrix512), matrix512, 'key map');
+  }
+
+  setFnMatrixVerified(matrix512, fnIndex) {
+    return this.verifiedWrite(() => this.setFnMatrix(matrix512, fnIndex), () => this.getFnMatrix(fnIndex, matrix512), matrix512, 'Fn layer');
+  }
+
+  getFnMatrix(fnIndex, ref) {
+    return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8, ref));
   }
 
   setFnMatrix(matrix512, fnIndex) {
@@ -620,16 +803,29 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- macros
-  async getMacroRaw(index) {
+  getMacroRaw(index, ref) {
+    return this.exclusive(() => this.readPaged(CMD.GET_MACRO, index, 4, ref));
+  }
+
+  // First page only: enough to tell whether a slot holds a macro.
+  // Reads only as many pages as the macro uses: it ends in the page whose last
+  // 16 bytes are zero (a valid macro never has 16 zero bytes in a row). Most
+  // macros fit in the first page, so this is 1 page instead of 4.
+  getMacro(index) {
     return this.exclusive(async () => {
       const out = new Uint8Array(256);
-      for (let p = 0; p < 4; p++) out.set(await this.query([CMD.GET_MACRO, index, p]), p * 64);
-      return out;
+      for (let p = 0; p < 4; p++) {
+        const page = await this.readPage(CMD.GET_MACRO, index, p);
+        out.set(page, p * 64);
+        if (page.subarray(48).every((b) => b === 0)) break;
+      }
+      return decodeMacro(out);
     });
   }
 
-  async getMacro(index) {
-    return decodeMacro(await this.getMacroRaw(index));
+  setMacroVerified(index, events, repeatCount = 1) {
+    const buf = encodeMacro(events, repeatCount);
+    return this.verifiedWrite(() => this.setMacro(index, events, repeatCount), () => this.getMacroRaw(index, buf), buf, 'macro', buf.length);
   }
 
   setMacro(index, events, repeatCount = 1) {

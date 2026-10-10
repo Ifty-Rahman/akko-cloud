@@ -26,7 +26,8 @@ export const SHORT_NAMES = {
   40: 'Enter', 41: 'Esc', 42: 'Bksp', 43: 'Tab', 57: 'Caps', 70: 'PrtSc', 71: 'ScrLk',
   73: 'Ins', 74: 'Home', 75: 'PgUp', 76: 'Del', 77: 'End', 78: 'PgDn', 79: '→', 80: '←',
   81: '↓', 82: '↑', 224: 'Ctrl', 225: 'Shift', 226: 'Alt', 227: 'Win', 228: 'Ctrl',
-  229: 'Shift', 230: 'Alt', 231: 'Win', 44: '', 101: 'Menu',
+  229: 'Shift', 230: 'Alt', 231: 'Win', 44: '', 101: 'Menu', 83: 'NumLk', 72: 'Pause',
+  88: 'KP Ent', 135: 'Ro', 139: 'Muhen', 138: 'Henk',
 };
 
 // KeyboardEvent.code -> HID usage (for "press a key" capture and macro recording)
@@ -115,9 +116,9 @@ export const MOUSE_ACTIONS = [
 
 export const MODIFIERS = { none: 0, ctrl: 224, shift: 225, alt: 226, win: 227 };
 export const MACRO_MODES = [
-  { id: 'repeat_times', code: 0, label: 'Play N times' },
-  { id: 'on_off', code: 1, label: 'Toggle loop on/off' },
-  { id: 'touch_repeat', code: 2, label: 'Loop while held' },
+  { id: 'repeat_times', code: 0, label: 'Loop' },
+  { id: 'on_off', code: 1, label: 'Toggle with the key' },
+  { id: 'touch_repeat', code: 2, label: 'Press to play' },
 ];
 
 const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -173,7 +174,7 @@ export function describeAction(a) {
     case 'function':
     case 'mouse': return a.label;
     case 'macro': return `Macro ${a.index + 1}`;
-    default: return 'Raw ' + a.bytes.map((x) => x.toString(16).padStart(2, '0')).join(' ');
+    default: return 'Built-in function';
   }
 }
 

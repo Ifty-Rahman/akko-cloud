@@ -152,6 +152,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 .editor-head .now { color: var(--muted); }
 .editor-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 
+.notice { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--panel)); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.notice p { margin: 0; flex: 1 1 320px; }
 .light-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
 .light-grid .card { margin-bottom: 0; }
 .light-grid + .card, .light-grid + .card + .card { margin-top: 16px; }

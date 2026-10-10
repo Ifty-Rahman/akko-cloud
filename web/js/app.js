@@ -54,6 +54,7 @@ async function busy(text, fn) {
     return await fn();
   } catch (e) {
     console.error(e);
+    logNote(`error during "${text}": ${e?.message || e}`);
     toast(e?.message || String(e), true);
     return undefined;
   } finally {
@@ -79,7 +80,7 @@ const S = {
   pic: new Uint8Array(384),
   pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
-  logging: false,
+  logging: true, // always on: the last LOG_MAX packets, for troubleshooting
   logLines: [],
   music: undefined,
   screen: undefined,
@@ -138,7 +139,9 @@ async function connect(transport) {
       }
       throw e;
     }
+    logNote(`connecting: ${transport.name} (${transport.dongle ? '2.4 GHz receiver' : transport.kind})`);
     const kb = new Keyboard(transport, { dongle: transport.dongle, log: logPacket });
+    kb.onNote = logNote;
     let busyLabel;
     // Over the receiver the keyboard stops answering when, on battery, its
     // lights-off timer runs out (the firmware turns the link off with the
@@ -148,6 +151,7 @@ async function connect(transport) {
     kb.onAsleep = (asleep) => {
       const el = $('#busyText');
       const banner = $('#asleepBanner');
+      logNote(asleep ? 'keyboard not answering (waiting for a key press)' : 'keyboard answering again');
       if (asleep) {
         busyLabel = el.textContent;
         const msg = 'Your keyboard isn’t answering. Press any key on it to continue. (On battery it stops answering once its lights go off.)';
@@ -219,6 +223,7 @@ async function initialLoad() {
   while (i < steps.length) {
     if (S.kb !== kb) break; // disconnected
     setState(i, 'active');
+    logNote(`loading: ${steps[i].label}`);
     try {
       await steps[i].run((text) => (steps[i].el.querySelector('.sub').textContent = text));
       steps[i].el.querySelector('.sub').textContent = '';
@@ -226,6 +231,7 @@ async function initialLoad() {
       i++;
     } catch (e) {
       if (S.kb !== kb) break;
+      logNote(`loading: ${steps[i].label} FAILED: ${e?.message || e}`);
       setState(i, 'failed', '!');
       const choice = await new Promise((resolve) => {
         err.replaceChildren(
@@ -1215,19 +1221,38 @@ document.addEventListener('click', (e) => {
 });
 
 // ================================================================== LOG
-function logPacket(dir, data) {
+const LOG_MAX = 3000;
+function logLine(line) {
   if (!S.logging) return;
-  S.logLines.push(`${new Date().toISOString().slice(11, 23)} ${dir} ${fmtHex(data)}`);
-  if (S.logLines.length > 600) S.logLines.splice(0, S.logLines.length - 600);
+  S.logLines.push(`${new Date().toISOString().slice(11, 23)} ${line}`);
+  if (S.logLines.length > LOG_MAX) S.logLines.splice(0, S.logLines.length - LOG_MAX);
   if (currentTab() === 'log') renderLog();
+}
+function logPacket(dir, data) {
+  logLine(`${dir} ${fmtHex(data)}`);
+}
+// what the app was doing, between the packets
+function logNote(text) {
+  logLine(`## ${text}`);
 }
 function renderLog() {
   const out = $('#logOut');
-  out.textContent = S.logLines.join('\n') || (S.logging ? 'Waiting for traffic…' : 'Enable “Record packets” to capture HID traffic.');
+  out.textContent = S.logLines.slice(-400).join('\n') || 'Waiting for traffic…';
   out.scrollTop = out.scrollHeight;
 }
-$('#logToggle').addEventListener('change', (e) => { S.logging = e.target.checked; renderLog(); });
 $('#logClearBtn').addEventListener('click', () => { S.logLines = []; renderLog(); });
+$('#logDownloadBtn').addEventListener('click', () => {
+  const head = [
+    `Akko Cloud debug log, ${new Date().toISOString()}`,
+    `Keyboard: ${S.kb ? `${modelName()} (id ${S.id & 0x7fffffff}), firmware ${S.fw ?? '?'}, ${S.transport?.dongle ? '2.4 GHz receiver' : S.transport?.kind}` : 'not connected'}`,
+    `Browser: ${navigator.userAgent}`,
+    '',
+  ];
+  const a = h('a', { href: URL.createObjectURL(new Blob([[...head, ...S.logLines].join('\n')], { type: 'text/plain' })), download: `akko-cloud-log-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.txt` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+});
 
 window.addEventListener('beforeunload', (e) => {
   if (isDirty() || macrosView.isDirty()) e.preventDefault();

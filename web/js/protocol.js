@@ -249,6 +249,7 @@ export class Keyboard {
         // few seconds later (or after a key press). Waiting sends nothing, so
         // wait for it (ensureAwake shows the "press any key" banner meanwhile)
         // and then keep waiting for the reply instead of failing.
+        this.onNote?.('keyboard went quiet mid-exchange; waiting for it');
         try {
           s = await this.ensureAwake();
         } catch {
@@ -280,6 +281,7 @@ export class Keyboard {
     // full loads 10 s apart slowed 0.36 -> 0.76 s per command; 60 s apart they
     // stayed at 0.36 s). So when a command was slow, give it a break first.
     if (this.coolDown) {
+      this.onNote?.(`resting ${this.coolDown} ms (the keyboard answered slowly)`);
       await this.rxPoll(this.coolDown);
       this.coolDown = 0;
     }
@@ -289,6 +291,7 @@ export class Keyboard {
     if (!(await this.rxLinked())) throw new Error(NOT_LINKED);
     if (!s.writeFinish) {
       const r = await this.pollUntil((x) => x.writeFinish);
+      if (r !== 'ok') this.onNote?.(`not sent: previous exchange never finished (${r})`);
       if (r === 'offline') throw new KeyboardAsleepError();
       if (r !== 'ok') throw new Error(STILL_BUSY);
     }
@@ -307,6 +310,7 @@ export class Keyboard {
     this.coolDown = r !== 'ok' ? COOL_DOWN_MAX_MS
       : took > SLOW_COMMAND_MS ? Math.min(COOL_DOWN_MAX_MS, Math.max(COOL_DOWN_LONG_MS, 2 * took))
         : this.lastPolls > SLOW_POLLS ? COOL_DOWN_LONG_MS : this.lastPolls > TIRED_POLLS ? COOL_DOWN_MS : 0;
+    if (r !== 'ok') this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${Date.now() - started} ms`);
     if (r === 'offline') throw new KeyboardAsleepError();
     if (r !== 'ok') throw new Error(expectReply ? NOT_ANSWERED : NOT_CONFIRMED);
   }

@@ -8,6 +8,7 @@ import {
 import { Keyboard } from './protocol.js';
 import { WebHidTransport, DemoTransport } from './transports.js';
 import { MusicFollower, ScreenFollower } from './host-effects.js';
+import { KEYBINDING_SECTIONS } from './keybindings.js';
 
 // ------------------------------------------------------------------ helpers
 const $ = (s, root = document) => root.querySelector(s);
@@ -188,7 +189,7 @@ function showApp() {
     h('span', {}, 'Link ', h('b', {}, link + (S.transport.dongle ? ' · 2.4 GHz receiver' : ''))),
     ...(S.kb.battery !== undefined ? [h('span', {}, 'Battery ', h('b', {}, `${S.kb.battery}%`))] : []),
   );
-  if (S.transport.dongle) toast('Connected through the 2.4 GHz receiver — writes are slower than over USB.');
+  if (S.transport.dongle) toast('Connected through the 2.4 GHz receiver. Akko officially supports customisation over the USB cable — use it if a change does not stick.');
   if (m.unknownId !== undefined) toast(`Unrecognised model id ${m.unknownId}. Using the standard PC75B layout.`, true);
   selectTab('keys');
 }
@@ -215,7 +216,7 @@ function selectTab(name) {
 async function loadTab(name) {
   if (!S.kb) return;
   if (S.loaded.has(name)) return;
-  const loaders = { keys: loadKeys, lighting: loadLighting, macros: loadMacros, settings: loadSettings, backup: async () => {}, log: async () => renderLog() };
+  const loaders = { keys: loadKeys, lighting: loadLighting, macros: loadMacros, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
   const ok = await busy('Reading from keyboard…', async () => {
     await loaders[name]();
     return true;
@@ -878,6 +879,27 @@ $('#importFile').addEventListener('change', async (e) => {
     $('#backupStatus').textContent = 'Backup restored.';
     toast('Backup restored');
   });
+});
+
+// ================================================================== SHORTCUTS
+function renderKeybindings() {
+  const q = ($('#kbFilter').value || '').trim().toLowerCase();
+  const match = (keys, what, section) => !q || [section, what, ...keys].join(' ').toLowerCase().includes(q);
+  const out = [];
+  for (const sec of KEYBINDING_SECTIONS) {
+    const rows = sec.rows.filter(([keys, what]) => match(keys, what, sec.title));
+    if (!rows.length) continue;
+    out.push(h('section', { class: 'kb-section' }, h('h3', {}, sec.title), sec.note ? h('p', { class: 'note' }, sec.note) : null,
+      rows.map(([keys, what]) => h('div', { class: 'kb-row' },
+        h('span', { class: 'combo' }, keys.flatMap((k, i) => (i ? ['+', h('kbd', {}, k)] : [h('kbd', {}, k)]))),
+        h('span', {}, what)))));
+  }
+  $('#keybindingsList').replaceChildren(...(out.length ? out : [h('p', { class: 'muted' }, 'No shortcut matches your search.')]));
+}
+$('#kbFilter').addEventListener('input', renderKeybindings);
+document.addEventListener('click', (e) => {
+  const go = e.target.closest?.('[data-goto]');
+  if (go && S.kb) selectTab(go.dataset.goto);
 });
 
 // ================================================================== LOG

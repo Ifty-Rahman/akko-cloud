@@ -1,0 +1,97 @@
+// Built-in keyboard shortcuts of the Akko PC75B Plus+ (from the printed manual,
+// pages 12–18). These work on the keyboard itself, without any driver.
+
+export const KEYBINDING_SECTIONS = [
+  {
+    title: 'Lighting (key backlight)',
+    note: 'Fn + L is a switch on the keyboard itself — the driver cannot see it. If the keys stay dark, press it.',
+    rows: [
+      [['Fn', 'L'], 'Light on / off'],
+      [['Fn', 'Home'], 'Effects 1–5 (press again to cycle)'],
+      [['Fn', 'PgUp'], 'Effects 6–10'],
+      [['Fn', 'PgDn'], 'Effects 11–15'],
+      [['Fn', 'End'], 'Effects 16–20'],
+      [['Fn', '\\'], 'Cycle 7 single colours / RGB loop (effects with colour)'],
+      [['Fn', '↑'], 'Brighter'],
+      [['Fn', '↓'], 'Dimmer'],
+      [['Fn', '←'], 'Animation direction left'],
+      [['Fn', '→'], 'Animation direction right'],
+      [['Fn', '-'], 'Slower animation'],
+      [['Fn', '+'], 'Faster animation'],
+    ],
+  },
+  {
+    title: 'PC case light (RGB strip)',
+    rows: [
+      [['Fn', 'Z'], 'Case light brightness'],
+      [['Fn', 'X'], 'Case light animation speed'],
+      [['Fn', 'Left Ctrl'], 'Case light effect'],
+    ],
+  },
+  {
+    title: 'Knob',
+    rows: [
+      [['Turn'], 'Volume / light brightness (− left, + right)'],
+      [['Press'], 'Toggle the knob between volume and light brightness'],
+    ],
+  },
+  {
+    title: 'Media & hotkeys',
+    rows: [
+      [['Fn', 'F1'], 'File Explorer'],
+      [['Fn', 'F2'], 'E-mail'],
+      [['Fn', 'F3'], 'Windows Search'],
+      [['Fn', 'F4'], 'Browser homepage'],
+      [['Fn', 'F5'], 'Media player'],
+      [['Fn', 'F6'], 'Play / pause'],
+      [['Fn', 'F7'], 'Previous track'],
+      [['Fn', 'F8'], 'Next track'],
+      [['Fn', 'I'], 'Insert'],
+      [['Fn', 'C'], 'Calculator'],
+      [['Fn', 'M'], 'Mute'],
+      [['Fn', '<'], 'Volume down'],
+      [['Fn', '>'], 'Volume up'],
+      [['Fn', 'W'], 'Swap WASD with the arrow keys'],
+    ],
+  },
+  {
+    title: 'System (Windows)',
+    rows: [
+      [['Fn', 'Left Win'], 'Lock / unlock the Windows key'],
+      [['Fn', '~ (hold 5 s)'], 'Restore factory settings'],
+      [['Fn', 'Right Ctrl (hold 3 s)'], 'Swap right Ctrl and Menu (App) key'],
+    ],
+  },
+  {
+    title: 'Mac mode',
+    note: 'Back switch to the right. F1–F12 act as Mac keys; hold Fn for plain F1–F12.',
+    rows: [
+      [['F1'], 'Decrease display brightness'],
+      [['F2'], 'Increase display brightness'],
+      [['F3'], 'Mission Control'],
+      [['F4'], 'Siri'],
+      [['F7'], 'Skip back'],
+      [['F8'], 'Play / pause'],
+      [['F9'], 'Skip forward'],
+      [['F10'], 'Mute'],
+      [['F11'], 'Volume down'],
+      [['F12'], 'Volume up'],
+      [['Fn', 'F1…F12'], 'Standard F1–F12'],
+      [['Left Win'], 'Option'],
+      [['Left Alt'], 'Command'],
+      [['Right Alt'], 'Command'],
+    ],
+  },
+  {
+    title: 'Connection',
+    note: 'Short press connects (slow flashing LED); hold to pair (fast flashing). Customisation is officially supported in wired mode.',
+    rows: [
+      [['Fn', 'E'], 'Bluetooth device 1'],
+      [['Fn', 'R'], 'Bluetooth device 2'],
+      [['Fn', 'T'], 'Bluetooth device 3'],
+      [['Fn', 'Y'], '2.4 GHz receiver'],
+      [['Fn', 'U'], 'Wired mode'],
+      [['Back switch'], 'Left: Windows · Middle: USB mode, no charging · Right: Mac'],
+    ],
+  },
+];

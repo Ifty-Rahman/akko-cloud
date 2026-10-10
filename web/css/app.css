@@ -151,10 +151,9 @@ main { flex: 1 0 auto; width: 100%; max-width: 1180px; margin: 0 auto; padding: 
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cap .ki { width: clamp(14px, calc(var(--u) * 0.4), 22px); height: clamp(14px, calc(var(--u) * 0.4), 22px); }
 .key.special .cap { color: var(--accent); font-weight: 600; }
-.kb.loading .key, .kb.loading .knob { pointer-events: none; }
-.kb.loading .key::before { animation: keyPulse 1.2s ease-in-out infinite; }
-@keyframes keyPulse { 50% { opacity: 0.55; } }
 .loading-note { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.9rem; margin: 0 0 8px; }
+.loading-note.err { color: var(--danger); flex-wrap: wrap; }
+.loading-note button { min-height: 30px; padding: 3px 12px; }
 .spinner.small { width: 14px; height: 14px; border-width: 2px; border-color: var(--line); border-top-color: var(--accent); }
 
 .knob-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 18px; }

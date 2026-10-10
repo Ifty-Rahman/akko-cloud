@@ -498,3 +498,12 @@ test('2.4 GHz receiver: a stale cached map heals (pages that differ are confirme
   assert.deepEqual(Array.from(m.slice(48, 64)), Array.from(rx.kb.matrices[0].slice(48, 64)));
   assert.equal(rx.kbSends, 9, 'page 0 read twice, the rest once');
 });
+
+test('2.4 GHz receiver: after the keyboard wakes, commands wait until the link has settled', async () => {
+  const rx = new FakeReceiver({ asleepPolls: 30 }); // asleep, then a key press wakes it
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  assert.equal(await kb.getDeviceId(), 594);
+  const statusPolls = rx.log.slice(0, rx.log.indexOf(0x8f)).filter((c) => c === 0xfb).length;
+  assert.ok(statusPolls >= 30 + 5, `kept polling while online before sending (${statusPolls} polls)`);
+  assert.equal(rx.kbSends, 1);
+});

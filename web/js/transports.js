@@ -77,7 +77,9 @@ export class WebHidTransport {
 
 // In-memory keyboard implementing the same protocol, used by demo mode and tests.
 export class DemoTransport {
-  constructor(model) {
+  // latencyMs: delay per command, to simulate the 2.4 GHz receiver (?demo&latency=350)
+  constructor(model, { latencyMs = 0 } = {}) {
+    this.latencyMs = latencyMs;
     this.vendorId = 0x3151;
     this.productId = 0x4003;
     this.name = 'Demo PC75B Plus';
@@ -110,6 +112,7 @@ export class DemoTransport {
   onDisconnect() {}
 
   async sendFeature(d) {
+    if (this.latencyMs) await new Promise((r) => setTimeout(r, this.latencyMs));
     this.sent.push(Uint8Array.from(d));
     const r = new Uint8Array(64);
     r[0] = d[0];

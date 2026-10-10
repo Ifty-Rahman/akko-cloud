@@ -51,6 +51,8 @@ export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
 const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
+const SETTLE_MS = 1000; // online this long after a wake before the first command
+const SETTLE_MAX_MS = 8000;
 const RX_MAX_POLLS = 15; // vendor: wait_fb_write_finish gives up after 15 polls
 
 const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz (Fn + Y), or hold Fn + Y to pair it again.';
@@ -177,22 +179,37 @@ export class Keyboard {
   async ensureAwake(timeoutMs = 60000) {
     const t0 = Date.now();
     let s = await this.rxStatus();
+    if (s.online) return s;
     while (!s.online && Date.now() - t0 < OFFLINE_GRACE_MS * this.rxPace) {
       await this.rxPoll(RX_POLL_MS);
       s = await this.rxStatus();
     }
-    if (s.online) return s;
+    if (s.online) return this.settle(s);
     this.onAsleep?.(true);
     try {
       while (Date.now() - t0 < timeoutMs) {
         await this.rxPoll(RX_ASLEEP_POLL_MS);
         s = await this.rxStatus();
-        if (s.online) return s;
+        if (s.online) return await this.settle(s);
       }
     } finally {
       this.onAsleep?.(false);
     }
     throw new KeyboardAsleepError();
+  }
+
+  // Right after the keyboard wakes or re-links, commands were seen to take
+  // seconds and then stall, dropping it off the receiver again. Wait until it
+  // has reported online for a moment before talking to it.
+  async settle(s) {
+    const t0 = Date.now();
+    let since = Date.now();
+    while (Date.now() - since < SETTLE_MS * this.rxPace && Date.now() - t0 < SETTLE_MAX_MS * this.rxPace) {
+      await this.rxPoll(RX_POLL_MS);
+      s = await this.rxStatus();
+      if (!s.online) since = Date.now();
+    }
+    return s;
   }
 
   // [FD] -> AA 55 01 while a keyboard is paired with the receiver.

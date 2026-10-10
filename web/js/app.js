@@ -307,7 +307,7 @@ async function loadKeys() {
     'aria-pressed': String(l.id === S.layer),
     onclick: async (ev) => {
       const btn = ev.currentTarget;
-      if (S.layer === l.id || S.keysLoading) return;
+      if (S.layer === l.id) return;
       if (isDirty() && !confirm('Discard unsaved key changes?')) return;
       S.layer = l.id;
       S.selected = undefined;
@@ -318,47 +318,74 @@ async function loadKeys() {
   await readLayer();
 }
 
+// The last known map (cached from the previous read, else the defaults) is
+// shown and editable at once; the read from the keyboard runs in the
+// background (~3 s over the 2.4 GHz receiver). Edits made meanwhile are kept on
+// top of what the keyboard reports. Writing waits until the read confirmed
+// the map, so a stale cache can never be written back.
 async function readLayer() {
   const token = (S.keysToken = (S.keysToken ?? 0) + 1);
-  S.orig = cachedMatrix();
-  S.work = Uint8Array.from(S.orig);
-  setKeysLoading(true);
+  const base = cachedMatrix();
+  S.orig = Uint8Array.from(base);
+  S.work = Uint8Array.from(base);
+  S.keysVerified = false;
+  setKeysLoading('loading');
   renderKeys();
   renderEditor();
   try {
-    // pages matching the last known map (cached, else the default) are accepted
-    // at once; others are read again until two reads agree (see readPaged)
-    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile, S.orig) : await S.kb.getFnMatrix(layerIndex(), S.orig);
+    // pages matching the last known map are accepted at once; others are read
+    // again until two reads agree (see readPaged)
+    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile, base) : await S.kb.getFnMatrix(layerIndex(), base);
     if (token !== S.keysToken) return; // a newer load replaced this one
+    const merged = Uint8Array.from(m);
+    let edits = 0;
+    for (let i = 0; i < 128; i++) {
+      if (!eqBytes(slot(S.work, i), slot(base, i))) {
+        merged.set(slot(S.work, i), i * 4);
+        edits++;
+      }
+    }
     S.orig = Uint8Array.from(m);
-    S.work = Uint8Array.from(m);
-    S.pendingMacros.clear();
+    S.work = merged;
+    if (!edits) S.pendingMacros.clear();
     storeMatrix(m);
-    if (token === S.keysToken) S.keysLoading = false;
+    S.keysVerified = true;
+    setKeysLoading(null);
     syncMacroModes();
+  } catch (e) {
+    if (token === S.keysToken) setKeysLoading('error', e);
+    throw e;
   } finally {
     if (token === S.keysToken) {
-      setKeysLoading(false);
       renderKeys();
       renderEditor();
     }
   }
 }
 
-function setKeysLoading(on) {
-  S.keysLoading = on;
-  $('#kbKeys').classList.toggle('loading', on);
-  $('#keysLoading').hidden = !on;
+function setKeysLoading(state, err) {
+  S.keysLoading = state === 'loading';
+  const note = $('#keysLoading');
+  note.hidden = !state;
+  note.classList.toggle('err', state === 'error');
+  if (state === 'loading') {
+    note.replaceChildren(h('span', { class: 'spinner small' }), 'Checking your layout with the keyboard… You can already pick keys and make changes.');
+  } else if (state === 'error') {
+    note.replaceChildren(`Couldn’t read the key map from the keyboard${err?.message ? ` (${err.message.replace(/\.$/, '')})` : ''}. Your changes are kept; writing is paused until the map has been read.`,
+      h('button', { type: 'button', class: 'ghost', onclick: () => readLayer().catch(() => {}) }, 'Retry'));
+  }
+  updateDirty();
 }
 
-const isDirty = () => !S.keysLoading && S.orig && S.work && !eqBytes(Array.from(S.orig), Array.from(S.work));
+const isDirty = () => S.orig && S.work && !eqBytes(Array.from(S.orig), Array.from(S.work));
 function updateDirty() {
   const d = isDirty();
   const broken = S.writeInterrupted === `${S.layer}:${layerIndex()}`;
   $('#keysDirty').hidden = !d && !broken;
   $('#keysDirty').textContent = broken ? 'Last write did not finish — write again' : 'Unsaved changes';
   $('#keysDirty').classList.toggle('err', broken);
-  $('#keysWriteBtn').disabled = !d && !broken;
+  $('#keysWriteBtn').disabled = !S.keysVerified || (!d && !broken);
+  $('#keysWriteBtn').title = S.keysVerified ? '' : 'Available once the key map has been read from the keyboard';
 }
 
 const capFor = (idx) => keycap(slot(S.work, idx), { fnLayer: isFnLayer(), macroName: macroLabel });
@@ -373,7 +400,7 @@ function keyButton(idx, attrs, cap) {
     class: [attrs.class, changed && 'changed', S.selected === idx && 'selected', cap.special && 'special'].filter(Boolean).join(' '),
     'aria-label': `${slotName(idx)}: ${isFnLayer() && !cap.special && !cap.text ? 'built-in Fn function' : actionText(decodeAction(slot(S.work, idx)))}`,
     'data-idx': idx,
-    onclick: (e) => !S.keysLoading && selectKey(idx, e.currentTarget),
+    onclick: (e) => selectKey(idx, e.currentTarget),
   });
   renderCap(el, cap);
   if (cap.pop) POPS.set(el, cap.pop);
@@ -635,7 +662,10 @@ $('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', as
   renderKeys();
   toast('Key map saved to keyboard');
 }));
-$('#keysReloadBtn').addEventListener('click', () => busy('Reading layer…', readLayer));
+$('#keysReloadBtn').addEventListener('click', () => {
+  if (isDirty() && !confirm('Discard unsaved key changes and read the layer again?')) return;
+  readLayer().catch(() => {});
+});
 $('#keysDefaultsBtn').addEventListener('click', () => {
   S.work = isFnLayer() ? new Uint8Array(512) : Uint8Array.from(S.model.matrix);
   renderKeys();
@@ -1121,4 +1151,5 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 initConnect();
-if (new URLSearchParams(location.search).has('demo')) connect(new DemoTransport(MODELS[0]));
+const params = new URLSearchParams(location.search);
+if (params.has('demo')) connect(new DemoTransport(MODELS[0], { latencyMs: Number(params.get('latency')) || 0 }));

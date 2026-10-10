@@ -47,26 +47,24 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 Then unplug and replug the keyboard (or receiver). The rule grants access to the logged-in desktop
 user only.
 
-## Hosting (Cloudflare Workers, static assets)
+## Hosting (Cloudflare Pages)
 
-The site is fully static: everything is in `web/`, with no build step and no server code. It runs on
-the Cloudflare Workers free tier as a static-assets Worker. `wrangler.toml` points it at `web/`.
+The site is fully static: everything is in `web/`, with no build step and no server code.
 
-Connected once in the Cloudflare dashboard (**Workers & Pages → Create → Import a repository →**
-`akko-cloud`):
+Connect the repository once in the Cloudflare dashboard:
+**Workers & Pages → Create → Pages → Connect to Git →** pick `akko-cloud`, then:
 
 | Setting | Value |
 |---|---|
 | Production branch | `main` |
+| Framework preset | None |
 | Build command | *(leave empty)* |
-| Deploy command | `npx wrangler deploy` |
-| Non-production branch deploy command | `npx wrangler versions upload` |
+| Build output directory | `web` |
 
 After that:
 
-* every merge to `main` deploys to production: <https://akko-cloud.ifty09rahman.workers.dev/>,
-* with **Settings → Build → Branch control → "Builds for non-production branches"** enabled, every
-  pull request gets a **preview URL** to test the change before merging.
+* every merge to `main` deploys to production (`https://akko-cloud.pages.dev`),
+* every pull request or branch gets its own **preview URL** to test the change before merging.
 
 `web/_headers` sets the security headers, including a strict Content-Security-Policy and
 `Permissions-Policy: hid=(self)`. It also disables caching of the app code, so a new deploy shows up
@@ -85,24 +83,24 @@ main  ←  PR  ←  feature/<name> | fix/<name> | chore/<name>
    npm run check     # syntax check of web/js
    npm run dev       # http://localhost:8000 (localhost counts as secure for WebHID)
    ```
-3. Push and open a pull request. GitHub Actions runs the tests, and Cloudflare builds a preview URL.
+3. Push and open a pull request. GitHub Actions runs the tests, and Cloudflare posts a preview URL.
 4. Test on the preview with a real keyboard, then merge. Production deploys automatically.
 
 ## Layout
 
 ```
-web/                  static site published by Cloudflare
+web/                  static site published by Cloudflare Pages
   index.html, css/    UI
   js/protocol.js      packet builders / Keyboard class (incl. 2.4 GHz receiver handshake)
   js/codec.js         key-action and macro encoders
   js/models.js        device ids, default matrices, physical layout, effect lists
   js/transports.js    WebHID and demo transports
   js/host-effects.js  music rhythm / screen colour streaming
-  _headers            HTTP headers served by Cloudflare
+  _headers            HTTP headers for Cloudflare Pages
 linux/                udev rule for Linux desktops
 docs/PROTOCOL.md      reverse-engineered protocol
 tests/                Node tests (npm test)
-wrangler.toml         Cloudflare Workers (static assets) config
+wrangler.toml         Cloudflare Pages config
 ```
 
 ## Disclaimer

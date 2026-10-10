@@ -8,6 +8,7 @@ import {
 import { Keyboard } from './protocol.js';
 import { WebHidTransport, DemoTransport } from './transports.js';
 import { MusicFollower, ScreenFollower } from './host-effects.js';
+import { KEYBINDING_SECTIONS } from './keybindings.js';
 
 // ------------------------------------------------------------------ helpers
 const $ = (s, root = document) => root.querySelector(s);
@@ -188,7 +189,7 @@ function showApp() {
     h('span', {}, 'Link ', h('b', {}, link + (S.transport.dongle ? ' · 2.4 GHz receiver' : ''))),
     ...(S.kb.battery !== undefined ? [h('span', {}, 'Battery ', h('b', {}, `${S.kb.battery}%`))] : []),
   );
-  if (S.transport.dongle) toast('Connected through the 2.4 GHz receiver — writes are slower than over USB.');
+  if (S.transport.dongle) toast('Connected through the 2.4 GHz receiver. Akko officially supports customisation over the USB cable — use it if a change does not stick.');
   if (m.unknownId !== undefined) toast(`Unrecognised model id ${m.unknownId}. Using the standard PC75B layout.`, true);
   selectTab('keys');
 }
@@ -215,7 +216,7 @@ function selectTab(name) {
 async function loadTab(name) {
   if (!S.kb) return;
   if (S.loaded.has(name)) return;
-  const loaders = { keys: loadKeys, lighting: loadLighting, macros: loadMacros, settings: loadSettings, backup: async () => {}, log: async () => renderLog() };
+  const loaders = { keys: loadKeys, lighting: loadLighting, macros: loadMacros, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
   const ok = await busy('Reading from keyboard…', async () => {
     await loaders[name]();
     return true;
@@ -461,22 +462,23 @@ async function loadLighting() {
   S.light = await S.kb.getLight();
   S.logo = S.model.logo ? await S.kb.getLogoLight().catch(() => undefined) : undefined;
   S.pic = await S.kb.getUserPicture();
-  renderLightCard($('#mainLightCard'), 'Backlight', MAIN_LIGHT_TYPES, S.light, async (l) => {
+  renderLightCard($('#mainLightCard'), 'Key backlight', MAIN_LIGHT_TYPES, S.light, async (l) => {
     await S.kb.setLight(l);
     S.light = l;
     updateHostCard();
   });
   if (S.model.logo) {
-    renderLightCard($('#logoLightCard'), 'Logo light', LOGO_LIGHT_TYPES, S.logo ?? { type: 'LightOff' }, async (l) => {
+    renderLightCard($('#logoLightCard'), 'PC case light (RGB strip)', LOGO_LIGHT_TYPES, S.logo ?? { type: 'LightOff' }, async (l) => {
       await S.kb.setLogoLight(l);
       S.logo = l;
     });
   } else {
-    $('#logoLightCard').replaceChildren(h('h2', {}, 'Logo light'), h('p', { class: 'muted' }, 'This model has no separately controllable logo light.'));
+    $('#logoLightCard').replaceChildren(h('h2', {}, 'PC case light (RGB strip)'), h('p', { class: 'muted' }, 'This model has no separately controllable case light.'));
   }
   renderPaint();
   updateHostCard();
 }
+
 
 const OPTION_LABELS = {
   z: 'Zig-zag', return: 'Return', down: 'Downward', up: 'Upward', out: 'Outward', in: 'Inward',
@@ -775,17 +777,12 @@ async function loadSettings() {
       toast('Sleep timers saved');
     }) }, 'Apply sleep timers')));
 
+  // Only the switches the PC75B manual documents (Fn + Win, Fn + W). Every
+  // other option bit is preserved unchanged on write: the original driver does
+  // not expose them and their meaning on this keyboard is not confirmed.
   const toggles = [
-    ['winKeyLock', 'Lock Windows key', 'Prevents accidental Win key presses while gaming.'],
-    ['wasdArrowSwap', 'Swap WASD and arrow keys', ''],
-    ['ledOff', 'Backlight off', ''],
-    ['logoLedOff', 'Logo light off', ''],
-    ['powerSave', 'Power-saving mode', 'Disables lighting effects to extend battery life.'],
-  ];
-  const advanced = [
-    ['keyboardMode', 'Keyboard mode flag (bit 6)', 'Exposed by the protocol; meaning not labelled by the vendor app.'],
-    ['keyboardLock', 'Keyboard lock flag (bit 7)', 'Exposed by the protocol; meaning not labelled by the vendor app.'],
-    ['fnMatrix', 'Use custom Fn layer', ''],
+    ['winKeyLock', 'Lock Windows key', 'Same as Fn + Left Win on the keyboard.'],
+    ['wasdArrowSwap', 'Swap WASD and arrow keys', 'Same as Fn + W on the keyboard.'],
   ];
   const mk = ([k, label, desc]) => h('label', { class: 'switch' }, h('span', {}, label, desc ? h('span', { class: 'desc' }, desc) : null),
     h('input', { type: 'checkbox', checked: !!S.options[k], onchange: (e) => busy('Saving option…', async () => {
@@ -795,8 +792,7 @@ async function loadSettings() {
       toast('Saved');
     }) }));
   const optCard = h('div', { class: 'card' }, h('h2', {}, 'Keyboard options (this profile)'), h('div', { class: 'opt-list' }, toggles.map(mk)),
-    h('details', { style: 'margin-top:12px' }, h('summary', { class: 'muted' }, 'Advanced'), h('div', { class: 'opt-list', style: 'margin-top:10px' }, advanced.map(mk))),
-    h('p', { class: 'muted small', style: 'margin-top:12px' }, `OS mode reported by the keyboard: ${S.options.macMode ? 'Mac' : 'Windows'} (switch with the keyboard's Fn shortcut).`));
+    h('p', { class: 'muted small', style: 'margin-top:12px' }, `OS mode: ${S.options.macMode ? 'Mac' : 'Windows'}. Set it with the switch on the back of the keyboard (left = Windows, right = Mac).`));
 
   const maint = h('div', { class: 'card' }, h('h2', {}, 'Maintenance'),
     h('p', { class: 'muted' }, 'Factory reset restores every profile, key map, macro and lighting setting to defaults.'),
@@ -883,6 +879,27 @@ $('#importFile').addEventListener('change', async (e) => {
     $('#backupStatus').textContent = 'Backup restored.';
     toast('Backup restored');
   });
+});
+
+// ================================================================== SHORTCUTS
+function renderKeybindings() {
+  const q = ($('#kbFilter').value || '').trim().toLowerCase();
+  const match = (keys, what, section) => !q || [section, what, ...keys].join(' ').toLowerCase().includes(q);
+  const out = [];
+  for (const sec of KEYBINDING_SECTIONS) {
+    const rows = sec.rows.filter(([keys, what]) => match(keys, what, sec.title));
+    if (!rows.length) continue;
+    out.push(h('section', { class: 'kb-section' }, h('h3', {}, sec.title), sec.note ? h('p', { class: 'note' }, sec.note) : null,
+      rows.map(([keys, what]) => h('div', { class: 'kb-row' },
+        h('span', { class: 'combo' }, keys.flatMap((k, i) => (i ? ['+', h('kbd', {}, k)] : [h('kbd', {}, k)]))),
+        h('span', {}, what)))));
+  }
+  $('#keybindingsList').replaceChildren(...(out.length ? out : [h('p', { class: 'muted' }, 'No shortcut matches your search.')]));
+}
+$('#kbFilter').addEventListener('input', renderKeybindings);
+document.addEventListener('click', (e) => {
+  const go = e.target.closest?.('[data-goto]');
+  if (go && S.kb) selectTab(go.dataset.goto);
 });
 
 // ================================================================== LOG

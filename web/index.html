@@ -55,6 +55,7 @@
         <button role="tab" data-tab="macros">Macros</button>
         <button role="tab" data-tab="settings">Settings</button>
         <button role="tab" data-tab="backup">Backup</button>
+        <button role="tab" data-tab="keybindings">Shortcuts</button>
         <button role="tab" data-tab="log">Log</button>
       </nav>
 
@@ -75,6 +76,10 @@
       </div>
 
       <div class="tab-panel" data-panel="lighting" hidden>
+        <div class="card notice" id="lightHint">
+          <p><b>Keys or case light dark?</b> Press <kbd>Fn</kbd> + <kbd>L</kbd> on the keyboard — that switch is on the keyboard itself and the driver cannot see it. Changes made here are saved even while the lights are off.</p>
+          <button class="ghost" data-goto="keybindings">All keyboard shortcuts</button>
+        </div>
         <div class="light-grid">
           <div class="card" id="mainLightCard"></div>
           <div class="card" id="logoLightCard"></div>
@@ -121,6 +126,18 @@
             <label class="button">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>
           </div>
           <p class="muted" id="backupStatus"></p>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="keybindings" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>Keyboard shortcuts</h2>
+            <span class="spacer"></span>
+            <input type="search" id="kbFilter" placeholder="Search shortcuts…" aria-label="Search shortcuts">
+          </div>
+          <p class="muted small">Built into the PC75B — they work without any driver. From the Akko PC75B manual.</p>
+          <div class="kb-sections" id="keybindingsList"></div>
         </div>
       </div>
 

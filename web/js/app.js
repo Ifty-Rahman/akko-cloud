@@ -133,7 +133,7 @@ async function connect(transport) {
     } catch (e) {
       if (transport.kind === 'usb' && /failed to open/i.test(e?.message || '')) {
         throw new Error(/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)
-          ? 'The browser is not allowed to open the keyboard. On Linux install deploy/70-akko-keyboard.rules (see README), then unplug and replug the keyboard.'
+          ? 'The browser is not allowed to open the keyboard. On Linux install linux/70-akko-keyboard.rules from the GitHub repo (see the README), then unplug and replug the keyboard or receiver.'
           : 'The keyboard could not be opened. Close the Akko Cloud Driver or any other configurator using it, then try again.');
       }
       throw e;

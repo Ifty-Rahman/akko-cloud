@@ -111,6 +111,14 @@ Keyboard replies are not returned directly.
   range. The receiver cannot wake it; a key press on the keyboard does. The
   vendor helper polls 15 × 100 ms and then reports an error.
 * Delivery normally takes 0.15–0.7 s per packet, and over 1 s when the link is waking up.
+* **Pace the status polls at 100 ms, as the vendor helper does.** In testing
+  against a real PC75B Plus+, polling `[FB]` every 25 ms repeatedly made deliveries
+  stall and the link drop. When that happens the keyboard loses the receiver
+  (green LED blinking) and needs a power cycle. At 100 ms, 10 back-to-back "load
+  every tab" cycles ran clean.
+* `d[2]` can read `1` for a moment, and the whole status can read `00 00 00 00`,
+  while the radio retries. Only treat the keyboard as offline once it stays
+  offline for more than about a second.
 * Music frames over the receiver are `[FE, 17]` then `[0D, 16 bytes of two
   4-bit levels]` (no checksum); screen frames are `[FE, 8]` then the normal
   `0E` packet.

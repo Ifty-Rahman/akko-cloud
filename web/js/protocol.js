@@ -48,6 +48,10 @@ export const RX = {
 // proto.driver.CheckSumType — applied by the vendor's native helper.
 export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 
+const RX_POLL_MS = 100; // vendor pace for [FB] status polls
+const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
+const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
+
 const MAXSPEED = 4;
 const DAZZLE = 8; // rainbow colour cycling
 const NORMAL = 7; // use the RGB bytes
@@ -64,7 +68,7 @@ const keyOf = (obj, v) => Object.keys(obj).find((k) => obj[k] === v);
 
 export class KeyboardAsleepError extends Error {
   constructor() {
-    super('The keyboard is asleep. Press any key on it and try again.');
+    super('The keyboard is not answering. Press any key on it; if its green LED keeps blinking, switch it off and on again.');
     this.name = 'KeyboardAsleepError';
   }
 }
@@ -99,13 +103,14 @@ function pagedHeader(cmd, index, page) {
 }
 
 export class Keyboard {
-  constructor(transport, { dongle = false, log = () => {} } = {}) {
+  constructor(transport, { dongle = false, log = () => {}, rxPace = 1 } = {}) {
     this.t = transport;
     this.dongle = dongle;
     this.log = log;
     this.profile = 0;
     this.queue = Promise.resolve();
     this.battery = undefined; // only known over the 2.4 GHz receiver
+    this.rxPace = rxPace; // 1 = vendor timing; tests pass a small factor
   }
 
   // Serialise all device traffic.
@@ -140,15 +145,28 @@ export class Keyboard {
     return s;
   }
 
+  // Receiver pacing. The vendor helper polls [FB] every 100 ms (wait_fb_write_finish,
+  // up to 15 polls). Polling much faster (25 ms) was observed to make the 2.4 GHz
+  // link drop and the keyboard lose its pairing (green LED blinking), so stay at
+  // the vendor's pace. Single "offline" readings also occur transiently while the
+  // radio retries, so offline only counts once it persists for OFFLINE_GRACE_MS.
+  rxPoll(ms) {
+    return sleep(Math.max(1, Math.round(ms * this.rxPace)));
+  }
+
   // A sleeping keyboard cannot be woken by the receiver; only a key press does.
   async ensureAwake(timeoutMs = 60000) {
+    const t0 = Date.now();
     let s = await this.rxStatus();
+    while (!s.online && Date.now() - t0 < OFFLINE_GRACE_MS * this.rxPace) {
+      await this.rxPoll(RX_POLL_MS);
+      s = await this.rxStatus();
+    }
     if (s.online) return s;
     this.onAsleep?.(true);
-    const t0 = Date.now();
     try {
       while (Date.now() - t0 < timeoutMs) {
-        await sleep(300);
+        await this.rxPoll(RX_ASLEEP_POLL_MS);
         s = await this.rxStatus();
         if (s.online) return s;
       }
@@ -162,28 +180,34 @@ export class Keyboard {
   async waitDelivered(expectReply, timeoutMs = 3000) {
     const t0 = Date.now();
     let sawPending = false;
-    await sleep(30);
-    while (Date.now() - t0 < timeoutMs) {
+    let offlineSince = null;
+    await this.rxPoll(50);
+    while (Date.now() - t0 < timeoutMs * this.rxPace) {
       const s = await this.rxStatus();
-      if (!s.online) return 'offline';
-      const done = expectReply ? s.readyRead : s.writeFinish;
-      if (!done) sawPending = true;
-      else if (sawPending || Date.now() - t0 > 150) return 'ok';
-      await sleep(25);
+      if (!s.online) {
+        offlineSince ??= Date.now();
+        if (Date.now() - offlineSince >= OFFLINE_GRACE_MS * this.rxPace) return 'offline';
+      } else {
+        offlineSince = null;
+        const done = expectReply ? s.readyRead : s.writeFinish;
+        if (!done) sawPending = true;
+        else if (sawPending || Date.now() - t0 > 150 * this.rxPace) return 'ok';
+      }
+      await this.rxPoll(RX_POLL_MS);
     }
     return 'timeout';
   }
 
   async sendDongle(data, expectReply) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await this.rxPoll(1000); // back off before a single retry
       await this.ensureAwake();
       this.log('→', data);
       await this.t.sendFeature(data);
       const r = await this.waitDelivered(expectReply);
       if (r === 'ok') return;
-      // keyboard dropped off (fell asleep / out of range): wake it and resend the same packet
     }
-    throw new Error('The keyboard did not confirm the command over the 2.4 GHz receiver. Move it closer or use the USB cable.');
+    throw new Error('The keyboard did not confirm the command over the 2.4 GHz receiver. If its green LED is blinking it lost the receiver: switch it off and on, or use the USB cable.');
   }
 
   // stream=true: fire-and-forget frames (music/screen), no link handshake.

@@ -221,7 +221,7 @@ class FakeReceiver {
 
 test('2.4 GHz receiver: queries wait for is_ready_read and fetch with 0xFC', async () => {
   const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true });
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   assert.deepEqual(await kb.getLinkStatus(), { linked: true, battery: 66 });
   assert.equal(await kb.getDeviceId(), 594);
   assert.equal(kb.battery, 66);
@@ -232,7 +232,7 @@ test('2.4 GHz receiver: queries wait for is_ready_read and fetch with 0xFC', asy
 
 test('2.4 GHz receiver: writes complete on is_write_finish (no reply expected)', async () => {
   const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true });
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   const m = Uint8Array.from(MODELS[1].matrix);
   m.set([3, 0, 111, 0], 48 * 4); // F8 -> brightness up
   await kb.setKeyMatrix(m, 0);
@@ -240,11 +240,45 @@ test('2.4 GHz receiver: writes complete on is_write_finish (no reply expected)',
   assert.deepEqual(Array.from(rx.kb.matrices[0].slice(48 * 4, 48 * 4 + 4)), [3, 0, 111, 0]);
 });
 
-test('2.4 GHz receiver: asleep keyboard triggers onAsleep and continues once awake', async () => {
-  const rx = new FakeReceiver({ asleepPolls: 3 });
-  const kb = new Keyboard(rx, { dongle: true });
+test('2.4 GHz receiver: a persistently offline keyboard triggers onAsleep and continues once awake', async () => {
+  const rx = new FakeReceiver({ asleepPolls: 1000 });
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   const events = [];
   kb.onAsleep = (v) => events.push(v);
   assert.equal(await kb.getDeviceId(), 594);
   assert.deepEqual(events, [true, false]);
+  assert.equal(rx.kbSends, 1);
+});
+
+test('2.4 GHz receiver: short offline blips are ignored (no prompt, no resend)', async () => {
+  const rx = new FakeReceiver({ asleepPolls: 3 });
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const events = [];
+  kb.onAsleep = (v) => events.push(v);
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.deepEqual(events, []);
+  // blip in the middle of a delivery
+  const realSend = rx.sendFeature.bind(rx);
+  let injected = false;
+  rx.sendFeature = async (d) => { if (d[0] === 0x85 && !injected) { injected = true; await realSend(d); rx.asleepPolls = 2; return; } return realSend(d); };
+  const before = rx.kbSends;
+  assert.equal(await kb.getProfile(), 0);
+  assert.equal(rx.kbSends - before, 1);
+  assert.deepEqual(events, []);
+});
+
+test('2.4 GHz receiver: status is polled at the vendor pace (>= 100 ms apart)', async () => {
+  const rx = new FakeReceiver();
+  const times = [];
+  const realSend = rx.sendFeature.bind(rx);
+  rx.sendFeature = async (d) => { if (d[0] === 0xfb) times.push(performance.now()); return realSend(d); };
+  const kb = new Keyboard(rx, { dongle: true });
+  globalThis.setTimeout = realSetTimeout; // real timers for this test
+  try {
+    await kb.getDeviceId();
+  } finally {
+    globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
+  }
+  const gaps = times.slice(2).map((t, i) => t - times[i + 1]);
+  assert.ok(gaps.length >= 1 && gaps.every((g) => g >= 95), `poll gaps ${gaps.map(Math.round)}`);
 });

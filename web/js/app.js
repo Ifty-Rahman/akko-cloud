@@ -185,7 +185,13 @@ async function initialLoad() {
   const kb = S.kb;
   const steps = [
     { label: 'Keyboard info', run: async () => {
-      S.fw = await kb.getFirmwareVersion().catch(() => undefined);
+      // the firmware only changes with an update, so it is read once per keyboard
+      const fwKey = `akko-fw:${S.id & 0x7fffffff}`;
+      try { S.fw = JSON.parse(localStorage.getItem(fwKey) ?? 'null') ?? undefined; } catch { S.fw = undefined; }
+      if (S.fw === undefined) {
+        S.fw = await kb.getFirmwareVersion().catch(() => undefined);
+        try { if (S.fw !== undefined) localStorage.setItem(fwKey, JSON.stringify(S.fw)); } catch { /* ignore */ }
+      }
       if (S.transport.dongle) await kb.getLinkStatus().catch(() => undefined);
       renderDeviceStrip();
     } },
@@ -746,7 +752,10 @@ $('#keysDefaultsBtn').addEventListener('click', () => {
 async function loadLighting() {
   S.light = await S.kb.getLight();
   S.logo = S.model.logo ? await S.kb.getLogoLight().catch(() => undefined) : undefined;
-  S.pic = await S.kb.getUserPicture();
+  // The per-key colours (7 reads over the receiver) are only read when the
+  // keyboard is showing them; otherwise the painter starts blank. "Load from
+  // keyboard" reads them on request.
+  S.pic = S.light?.type === 'LightUserPicture' ? await S.kb.getUserPicture() : new Uint8Array(384);
   renderLightCard($('#mainLightCard'), 'Key backlight', MAIN_LIGHT_TYPES, S.light, async (l) => {
     await S.kb.setLight(l);
     S.light = l;

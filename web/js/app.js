@@ -177,6 +177,7 @@ async function connect(transport) {
     showApp();
   });
   if (S.kb) await initialLoad();
+  else $('#connectLogRow').hidden = !S.logLines.length; // connect failed: offer the log
 }
 
 // ---- loading screen ------------------------------------------------------
@@ -238,7 +239,8 @@ async function initialLoad() {
           h('div', {}, `${steps[i].label} could not be read: ${e?.message || e}`),
           h('div', { class: 'row' },
             h('button', { class: 'primary', onclick: () => resolve('retry') }, 'Try again'),
-            h('button', { class: 'ghost', onclick: () => resolve('skip') }, 'Continue anyway')));
+            h('button', { class: 'ghost', onclick: () => resolve('skip') }, 'Continue anyway'),
+            h('button', { type: 'button', class: 'linkish', onclick: downloadLog }, 'Download debug log')));
         err.hidden = false;
       });
       err.hidden = true;
@@ -272,6 +274,7 @@ function renderDeviceStrip() {
 
 async function disconnect() {
   $('#loader').hidden = true;
+  $('#connectLogRow').hidden = !S.logLines.length;
   S.music?.stop();
   S.screen?.stop();
   try { await S.transport?.close(); } catch { /* ignore */ }
@@ -1241,7 +1244,7 @@ function renderLog() {
   out.scrollTop = out.scrollHeight;
 }
 $('#logClearBtn').addEventListener('click', () => { S.logLines = []; renderLog(); });
-$('#logDownloadBtn').addEventListener('click', () => {
+function downloadLog() {
   const head = [
     `Akko Cloud debug log, ${new Date().toISOString()}`,
     `Keyboard: ${S.kb ? `${modelName()} (id ${S.id & 0x7fffffff}), firmware ${S.fw ?? '?'}, ${S.transport?.dongle ? '2.4 GHz receiver' : S.transport?.kind}` : 'not connected'}`,
@@ -1252,7 +1255,10 @@ $('#logDownloadBtn').addEventListener('click', () => {
   document.body.append(a);
   a.click();
   a.remove();
-});
+}
+$('#logDownloadBtn').addEventListener('click', downloadLog);
+// the Debug tab only exists once connected, so a failed connect offers the log here
+$('#connectLogBtn').addEventListener('click', downloadLog);
 
 window.addEventListener('beforeunload', (e) => {
   if (isDirty() || macrosView.isDirty()) e.preventDefault();

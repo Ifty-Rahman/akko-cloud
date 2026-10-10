@@ -182,49 +182,29 @@ export function createMacrosView(d) {
     return item;
   }
 
-  // ------------------------------------------------------------ keyboard scan
-  // Macros stored on the keyboard that are not in this browser's library
-  // (written from another browser or the vendor app, or before the library
-  // existed) are read once per connection and added to the library.
-  const headIsEmpty = (page) => page.slice(2).every((b) => b === 0);
-  async function scanKeyboard() {
+  // ------------------------------------------------------------ keyboard sync
+  // Macros that keys use but that are not in this browser's library (written
+  // from another browser or the vendor app) are read once and added to it.
+  // Only slots that keys refer to are read: scanning all 20 slots was too much
+  // radio traffic for the 2.4 GHz receiver. Runs during the connect loading.
+  async function syncFromKeyboard(slots, onProgress) {
     const kb = S.kb;
-    if (!kb || V.scannedFor === kb) return;
-    V.scannedFor = kb;
-    const max = S.model.maxMacros;
-    V.scan = { done: 0, total: max, found: 0 };
-    renderLib();
-    try {
-      for (let slotIdx = 0; slotIdx < max; slotIdx++) {
-        if (S.kb !== kb) return; // disconnected
-        V.scan.done = slotIdx;
-        renderScan();
-        const map = loadSlotMap(deviceId());
-        if (Object.values(map).includes(slotIdx)) continue; // already known (or deliberately removed)
-        if (headIsEmpty(await kb.getMacroHead(slotIdx))) continue;
-        const got = await kb.getMacro(slotIdx);
-        if (!got.events.length) continue;
-        const item = adoptItem({ name: `Keyboard macro ${slotIdx + 1}`, mode: d.modeForSlot?.(slotIdx) ?? 'repeat_times', repeat: Math.max(1, got.repeatCount || 1), events: got.events });
-        const fresh = loadSlotMap(deviceId());
-        fresh[item.id] = slotIdx;
-        saveSlotMap(deviceId(), fresh);
-        V.scan.found++;
-        if (!V.edit) select(item.id, true);
-        else renderLib();
-      }
-    } catch (e) {
-      V.scannedFor = undefined; // try again next time the tab opens
-      toast(`Could not finish checking the keyboard for macros: ${e.message}`, true);
-    } finally {
-      const found = V.scan?.found;
-      V.scan = undefined;
-      if ($('#macroLib')) renderLib();
-      if (found) toast(`Found ${found} macro${found === 1 ? '' : 's'} on the keyboard and added ${found === 1 ? 'it' : 'them'} to your library`);
+    const map = loadSlotMap(deviceId());
+    const known = new Set(Object.values(map)); // in the library (or deliberately removed)
+    const todo = [...slots].filter((x) => !known.has(x)).sort((a, b) => a - b);
+    let found = 0;
+    for (const [i, slotIdx] of todo.entries()) {
+      if (S.kb !== kb) return found; // disconnected
+      onProgress?.(i, todo.length);
+      const got = await kb.getMacro(slotIdx);
+      if (!got.events.length) continue;
+      const item = adoptItem({ name: `Keyboard macro ${slotIdx + 1}`, mode: d.modeForSlot?.(slotIdx) ?? 'repeat_times', repeat: Math.max(1, got.repeatCount || 1), events: got.events });
+      const fresh = loadSlotMap(deviceId());
+      fresh[item.id] = slotIdx;
+      saveSlotMap(deviceId(), fresh);
+      found++;
     }
-  }
-  function renderScan() {
-    const el = $('#macroLib .lib-scan');
-    if (el && V.scan) el.lastChild.textContent = `Checking the keyboard for macros… ${V.scan.done + 1}/${V.scan.total}`;
+    return found;
   }
 
   // ------------------------------------------------------------ library panel
@@ -293,7 +273,7 @@ export function createMacrosView(d) {
           f.open ? h('div', { class: 'lib-children' }, kids.length ? kids.map(macroRow) : h('p', { class: 'lib-empty' }, 'Empty folder')) : null);
       }),
       sorted(V.lib.macros.filter((m) => !m.folderId || !V.lib.folders.some((f) => f.id === m.folderId))).map(macroRow),
-      !V.lib.macros.length && !V.lib.folders.length && !V.scan ? h('p', { class: 'lib-empty big' }, 'No macros yet. Click + or right-click here to create one.') : null);
+      !V.lib.macros.length && !V.lib.folders.length ? h('p', { class: 'lib-empty big' }, 'No macros yet. Click + or right-click here to create one.') : null);
     list.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       openMenu(e.clientX, e.clientY, [
@@ -310,9 +290,8 @@ export function createMacrosView(d) {
         h('button', { type: 'button', class: 'icon-btn', title: 'New macro', 'aria-label': 'New macro', innerHTML: icon('plusCircle'), onclick: () => newMacro() }),
         h('button', { type: 'button', class: 'icon-btn', title: 'New folder', 'aria-label': 'New folder', innerHTML: icon('folderPlus'), onclick: newFolder }),
         h('button', { type: 'button', class: 'icon-btn', title: 'Import macro', 'aria-label': 'Import macro', innerHTML: icon('upload'), onclick: importMacros })),
-      V.scan ? h('p', { class: 'lib-scan' }, h('span', { class: 'spinner small' }), `Checking the keyboard for macros… ${V.scan.done + 1}/${V.scan.total}`) : null,
       list,
-      h('p', { class: 'lib-foot' }, 'Saved in this browser. Macros already on the keyboard are added automatically. Assign a macro to a key on the Keys tab to put it on the keyboard.'),
+      h('p', { class: 'lib-foot' }, 'Saved in this browser. Macros your keys already use are added automatically. Assign a macro to a key on the Keys tab to put it on the keyboard.'),
     ].filter(Boolean));
     list.scrollTop = top;
   }
@@ -593,7 +572,6 @@ export function createMacrosView(d) {
   }
 
   function render() {
-    scanKeyboard();
     // open the most recently edited macro rather than an empty editor
     if (!V.edit || !byId(V.sel)) {
       const last = [...V.lib.macros].sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
@@ -614,6 +592,7 @@ export function createMacrosView(d) {
     isDirty: () => V.dirty,
     macroForSlot: (slot) => byId(macroIdForSlot(loadSlotMap(deviceId()), slot)),
     adopt: adoptItem,
+    syncFromKeyboard,
     select,
   };
 }

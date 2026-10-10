@@ -158,12 +158,11 @@ async function connect(transport) {
         banner.hidden = true;
       }
     };
-    // Only what the dashboard needs up front; the rest loads in the background.
     const id = await kb.getDeviceId();
     const profile = await kb.getProfile().catch(() => 0);
     Object.assign(S, {
       kb, transport, id, fw: undefined, profile, model: findModel(id), layer: 'base', selected: undefined,
-      loaded: new Set(), pendingMacros: new Map(),
+      loaded: new Set(), pendingMacros: new Map(), initialLoading: true,
     });
     kb.colourCodes = S.model.colourCodes ?? VENDOR_COLOUR_CODES;
     transport.onDisconnect(() => {
@@ -172,15 +171,72 @@ async function connect(transport) {
     });
     showApp();
   });
+  if (S.kb) await initialLoad();
+}
+
+// ---- loading screen ------------------------------------------------------
+// Like the vendor app, everything the tabs need is read once behind a loading
+// screen, so switching tabs afterwards sends nothing to the keyboard. Over the
+// 2.4 GHz receiver long bursts of traffic can make the keyboard drop off, so
+// the load is kept small: the current profile's key map, only the macros its
+// keys use (and only those not already in the library), lighting and settings.
+async function initialLoad() {
   const kb = S.kb;
-  if (!kb) return;
-  // queued behind the key-map read, so the layout appears first
-  S.fw = await kb.getFirmwareVersion().catch(() => undefined);
-  if (S.transport?.dongle) {
-    await kb.getLinkStatus().catch(() => undefined);
-    S.sleepRf = (await kb.getSleepTime().catch(() => undefined))?.rf; // for the "asleep" message
+  const steps = [
+    { label: 'Keyboard info', run: async () => {
+      S.fw = await kb.getFirmwareVersion().catch(() => undefined);
+      if (S.transport.dongle) await kb.getLinkStatus().catch(() => undefined);
+      renderDeviceStrip();
+    } },
+    { label: 'Key map', run: async () => { await loadKeys(); S.loaded.add('keys'); } },
+    { label: 'Macros used by your keys', run: async (sub) => {
+      const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => sub(`${i + 1} of ${n}`));
+      if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
+    } },
+    { label: 'Lighting', run: async () => { await loadLighting(); S.loaded.add('lighting'); } },
+    { label: 'Settings', run: async () => { await loadSettings(); S.loaded.add('settings'); } },
+  ];
+  const box = $('#loader');
+  const list = $('#loaderSteps');
+  const err = $('#loaderError');
+  $('#loaderHint').textContent = S.transport.dongle
+    ? 'About 10 seconds over the 2.4 GHz receiver. Please wait until it finishes.'
+    : 'Just a few seconds. Please wait until it finishes.';
+  list.replaceChildren(...steps.map((st) => (st.el = h('li', {}, h('span', { class: 'mark' }), h('span', {}, st.label), h('span', { class: 'sub' })))));
+  const setState = (i, state, mark = '') => {
+    steps[i].el.className = state;
+    steps[i].el.querySelector('.mark').textContent = mark;
+    $('#loaderBar').style.width = `${(steps.filter((x) => x.el.className === 'done').length / steps.length) * 100}%`;
+  };
+  err.hidden = true;
+  box.hidden = false;
+  let i = 0;
+  while (i < steps.length) {
+    if (S.kb !== kb) break; // disconnected
+    setState(i, 'active');
+    try {
+      await steps[i].run((text) => (steps[i].el.querySelector('.sub').textContent = text));
+      steps[i].el.querySelector('.sub').textContent = '';
+      setState(i, 'done', '✓');
+      i++;
+    } catch (e) {
+      if (S.kb !== kb) break;
+      setState(i, 'failed', '!');
+      const choice = await new Promise((resolve) => {
+        err.replaceChildren(
+          h('div', {}, `${steps[i].label} could not be read: ${e?.message || e}`),
+          h('div', { class: 'row' },
+            h('button', { class: 'primary', onclick: () => resolve('retry') }, 'Try again'),
+            h('button', { class: 'ghost', onclick: () => resolve('skip') }, 'Continue anyway')));
+        err.hidden = false;
+      });
+      err.hidden = true;
+      if (choice === 'skip') break; // the remaining tabs load when they are opened
+    }
   }
-  if (S.kb === kb) renderDeviceStrip();
+  box.hidden = true;
+  S.initialLoading = false;
+  if (S.kb === kb) selectTab(currentTab());
 }
 
 // Name from the model id the keyboard reports (Akko's own id → name table),
@@ -204,6 +260,7 @@ function renderDeviceStrip() {
 }
 
 async function disconnect() {
+  $('#loader').hidden = true;
   S.music?.stop();
   S.screen?.stop();
   try { await S.transport?.close(); } catch { /* ignore */ }
@@ -270,7 +327,7 @@ function selectTab(name) {
   loadTab(name);
 }
 async function loadTab(name) {
-  if (!S.kb) return;
+  if (!S.kb || S.initialLoading) return;
   if (S.loaded.has(name)) return;
   if (name === 'keys') {
     // non-blocking: the layout is drawn at once and filled in when the read finishes

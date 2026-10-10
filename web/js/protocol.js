@@ -656,22 +656,23 @@ export class Keyboard {
       full.set(Array.from(ref).slice(0, pages * 64));
       ref = full;
     }
-    for (let p = 0; p < pages; p++) {
-      const q = () => this.query([cmd, index, p]);
-      const want = ref?.subarray(p * 64, p * 64 + 64);
-      let page = await q();
-      if (this.dongle && !(want && sameBytes(page, want))) {
-        for (let n = 0; ; n++) {
-          const again = await q();
-          if (sameBytes(again, page)) break; // the same twice
-          page = again;
-          if (want && sameBytes(page, want)) break; // matches what we expected
-          if (n >= 2) throw new Error(INCONSISTENT_REPLY);
-        }
-      }
-      out.set(page, p * 64);
-    }
+    for (let p = 0; p < pages; p++) out.set(await this.readPage(cmd, index, p, ref?.subarray(p * 64, p * 64 + 64)), p * 64);
     return out;
+  }
+
+  async readPage(cmd, index, p, want) {
+    const q = () => this.query([cmd, index, p]);
+    let page = await q();
+    if (this.dongle && !(want && sameBytes(page, want))) {
+      for (let n = 0; ; n++) {
+        const again = await q();
+        if (sameBytes(again, page)) break; // the same twice
+        page = again;
+        if (want && sameBytes(page, want)) break; // matches what we expected
+        if (n >= 2) throw new Error(INCONSISTENT_REPLY);
+      }
+    }
+    return page;
   }
 
   async writePaged(cmd, index, data, pages, gap) {
@@ -732,12 +733,19 @@ export class Keyboard {
   }
 
   // First page only: enough to tell whether a slot holds a macro.
-  getMacroHead(index) {
-    return this.exclusive(() => this.query([CMD.GET_MACRO, index, 0]));
-  }
-
-  async getMacro(index) {
-    return decodeMacro(await this.getMacroRaw(index));
+  // Reads only as many pages as the macro uses: it ends in the page whose last
+  // 16 bytes are zero (a valid macro never has 16 zero bytes in a row). Most
+  // macros fit in the first page, so this is 1 page instead of 4.
+  getMacro(index) {
+    return this.exclusive(async () => {
+      const out = new Uint8Array(256);
+      for (let p = 0; p < 4; p++) {
+        const page = await this.readPage(CMD.GET_MACRO, index, p);
+        out.set(page, p * 64);
+        if (page.subarray(48).every((b) => b === 0)) break;
+      }
+      return decodeMacro(out);
+    });
   }
 
   setMacroVerified(index, events, repeatCount = 1) {

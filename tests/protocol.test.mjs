@@ -507,3 +507,16 @@ test('2.4 GHz receiver: after the keyboard wakes, commands wait until the link h
   assert.ok(statusPolls >= 30 + 5, `kept polling while online before sending (${statusPolls} polls)`);
   assert.equal(rx.kbSends, 1);
 });
+
+test('macro reads stop at the end of the macro (a short macro is 1 page, not 4)', async () => {
+  const rx = new LossyReceiver(-1); // no loss, just counts 0x8B page queries
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
+  await kb.setMacro(5, ev, 1);
+  rx.queries = [];
+  assert.deepEqual((await kb.getMacro(5)).events, ev);
+  assert.deepEqual([...new Set(rx.queries)], [0], 'only page 0 was read (twice over the receiver, to confirm it)');
+  rx.queries = [];
+  assert.deepEqual((await kb.getMacro(6)).events, [], 'an empty slot is one page too');
+  assert.deepEqual([...new Set(rx.queries)], [0]);
+});

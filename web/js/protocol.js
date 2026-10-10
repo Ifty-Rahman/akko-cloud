@@ -53,7 +53,12 @@ const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyb
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
 const SETTLE_MS = 1000; // online this long after a wake before the first command
 const SETTLE_MAX_MS = 8000;
-const RX_MAX_POLLS = 15; // vendor: wait_fb_write_finish gives up after 15 polls
+const RX_MAX_POLLS = 15;
+// a rested keyboard confirms within 1-3 polls; more means it is tiring
+const TIRED_POLLS = 3;
+const SLOW_POLLS = 8;
+const COOL_DOWN_MS = 500;
+const COOL_DOWN_LONG_MS = 1500; // vendor: wait_fb_write_finish gives up after 15 polls
 
 const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz (Fn + Y), or hold Fn + Y to pair it again.';
 const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
@@ -231,8 +236,12 @@ export class Keyboard {
         continue;
       }
       offlineSince = null;
-      if (expectReply ? s.readyRead : s.writeFinish) return 'ok';
+      if (expectReply ? s.readyRead : s.writeFinish) {
+        this.lastPolls = i + 1;
+        return 'ok';
+      }
     }
+    this.lastPolls = RX_MAX_POLLS;
     return offlineSince !== null ? 'offline' : 'timeout';
   }
 
@@ -242,6 +251,15 @@ export class Keyboard {
   // lost one is sent once more, but only after the receiver reports the
   // keyboard idle again (re-sending while it was still busy made it drop off).
   async sendDongle(data, expectReply) {
+    // Sustained traffic tires the keyboard: replies take longer and longer
+    // until it drops off the receiver (green LED blinking). Rest restores it
+    // (on a PC75B Plus+: full loads 10 s apart slowed 0.36 -> 0.76 s per
+    // command; 60 s apart they stayed at 0.36 s). So when a command was slow
+    // to confirm, give the keyboard a break before the next one.
+    if (this.coolDown) {
+      await this.rxPoll(this.coolDown);
+      this.coolDown = 0;
+    }
     for (let attempt = 0; ; attempt++) {
       // wait_fb_write_finish starts with a 100 ms sleep, so the vendor never
       // sends sooner than that after the previous exchange. Commands sent
@@ -259,6 +277,7 @@ export class Keyboard {
       await this.t.sendFeature(data);
       await this.rxLinked();
       const r = await this.waitDelivered(expectReply);
+      this.coolDown = attempt > 0 || this.lastPolls > SLOW_POLLS ? COOL_DOWN_LONG_MS : this.lastPolls > TIRED_POLLS ? COOL_DOWN_MS : 0;
       if (r === 'ok') return;
       if (attempt >= 1) throw r === 'offline' ? new KeyboardAsleepError() : new Error(expectReply ? NOT_ANSWERED : NOT_CONFIRMED);
     }

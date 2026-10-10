@@ -520,3 +520,17 @@ test('macro reads stop at the end of the macro (a short macro is 1 page, not 4)'
   assert.deepEqual((await kb.getMacro(6)).events, [], 'an empty slot is one page too');
   assert.deepEqual([...new Set(rx.queries)], [0]);
 });
+
+test('2.4 GHz receiver: a slow confirmation gives the keyboard a break before the next command', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getDeviceId();
+  assert.equal(kb.coolDown, 0, 'a quick confirmation costs nothing');
+  const send = rx.sendFeature.bind(rx);
+  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x85) rx.pending = 6; }; // keyboard slow to confirm
+  await kb.getProfile();
+  assert.ok(kb.coolDown > 0, 'cool-down scheduled after a slow confirmation');
+  rx.sendFeature = send;
+  await kb.getDeviceId();
+  assert.equal(kb.coolDown, 0, 'used up by the next command');
+});

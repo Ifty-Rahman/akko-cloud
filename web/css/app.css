@@ -159,13 +159,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 
 .knob-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 18px; }
 .knob-title { color: var(--muted); font-size: 0.85rem; margin-right: 4px; }
-.knob-action { display: inline-flex; align-items: center; gap: 8px; border-radius: 99px; padding: 4px 12px 4px 6px; min-height: 36px; font-size: 0.85rem; }
+.knob-action { display: inline-flex; align-items: center; gap: 8px; border-radius: 99px; padding: 4px 14px; min-height: 36px; font-size: 0.85rem; }
 .knob-action .knob-what { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
-.knob-action .knob-dir .ki { width: 16px; height: 16px; }
-.knob-action .cap { width: 26px; height: 26px; border-radius: 7px; background: var(--key-top); border: 1px solid var(--line); padding: 0; }
-.knob-action .cap .ki { width: 16px; height: 16px; }
 .knob-action .knob-desc { color: var(--text); }
-.knob-action.special .cap { color: var(--accent); }
 .knob-action.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .knob-action.changed { border-color: var(--accent); background: var(--accent-soft); }
 

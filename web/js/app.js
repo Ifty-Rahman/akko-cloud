@@ -385,6 +385,7 @@ function renderKeys() {
   const knobRow = (idx, label) => {
     const cap = capFor(idx);
     const b = keyButton(idx, { class: 'knob-action' }, cap);
+    b.querySelector('.cap')?.remove(); // text only: what the knob does is spelled out
     b.prepend(h('span', { class: 'knob-what' }, label));
     b.append(h('span', { class: 'knob-desc' }, isFnLayer() && !cap.special && !cap.text ? 'Built-in' : actionText(decodeAction(slot(S.work, idx)))));
     return b;

@@ -1,0 +1,4 @@
+# Cloudflare Pages project configuration (static site, no build step).
+name = "akko-cloud"
+pages_build_output_dir = "web"
+compatibility_date = "2025-09-01"

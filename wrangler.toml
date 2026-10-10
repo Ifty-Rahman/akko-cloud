@@ -1,4 +1,7 @@
-# Cloudflare Pages project configuration (static site, no build step).
+# Cloudflare Workers static-assets site (no build step, no server code).
+# Deployed by Workers Builds from GitHub: production = main.
 name = "akko-cloud"
-pages_build_output_dir = "web"
 compatibility_date = "2025-09-01"
+
+[assets]
+directory = "./web"

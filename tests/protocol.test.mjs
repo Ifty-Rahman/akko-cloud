@@ -231,7 +231,7 @@ test('2.4 GHz receiver: queries wait for is_ready_read and fetch with 0xFC', asy
   assert.deepEqual(await kb.getLinkStatus(), { linked: true, battery: 66 });
   assert.equal(await kb.getDeviceId(), 594);
   assert.equal(kb.battery, 66);
-  const m = await kb.getKeyMatrix(0);
+  const m = await kb.getKeyMatrix(0, Uint8Array.from(rx.kb.matrices[0])); // last known map
   assert.deepEqual(Array.from(m.slice(0, 4)), [0, 0, 41, 0]);
   assert.equal(rx.kbSends, 9);
 });
@@ -425,4 +425,76 @@ test('macro writes are read back', async () => {
   const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
   assert.equal(await kb.setMacroVerified(19, ev, 1), 0);
   assert.deepEqual((await kb.getMacro(19)).events, ev);
+});
+
+// receiver that returns one reply with its last 16 bytes zeroed (lost radio block)
+class LossyReceiver extends FakeReceiver {
+  constructor(losePage) { super(); this.losePage = losePage; this.lost = 0; this.queries = []; }
+  async sendFeature(d) {
+    if (d[0] === 0x89 || d[0] === 0x8b) this.queries.push(d[2]);
+    await super.sendFeature(d);
+    if (d[0] === 0xfc && this.queries.at(-1) === this.losePage && !this.lost) {
+      this.lost++;
+      this.out = Uint8Array.from(this.out);
+      this.out.fill(0, 48, 64);
+    }
+  }
+}
+
+test('2.4 GHz receiver: a page with a lost 16-byte block is read again (keys 12-15 not "disabled")', async () => {
+  const rx = new LossyReceiver(0);
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const m = await kb.getKeyMatrix(0, Uint8Array.from(rx.kb.matrices[0]));
+  const want = rx.kb.matrices[0];
+  assert.deepEqual(Array.from(m.slice(0, want.length)), Array.from(want));
+  assert.equal(rx.lost, 1);
+  assert.equal(rx.queries.filter((p) => p === 0).length, 2, 'page 0 read twice');
+  assert.equal(rx.queries.length, 9, 'pages matching the reference are read once');
+});
+
+test('2.4 GHz receiver: keys really disabled are accepted after two identical reads', async () => {
+  const rx = new FakeReceiver();
+  rx.kb.matrices[0].fill(0, 48, 64); // the user disabled keys 12-15
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const m = await kb.getKeyMatrix(0, MODELS[1].matrix);
+  assert.ok(m.slice(48, 64).every((b) => b === 0));
+});
+
+test('2.4 GHz receiver: macro reads recover a lost block too', async () => {
+  const rx = new LossyReceiver(0);
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const ev = Array.from({ length: 12 }, (_, i) => [{ type: 'keyboard', action: 'down', value: 4 + i }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 + i }, { type: 'delay', value: 20 }]).flat();
+  await kb.setMacro(3, ev, 1);
+  rx.queries = [];
+  assert.deepEqual((await kb.getMacro(3)).events, ev);
+  assert.equal(rx.lost, 1);
+});
+
+test('2.4 GHz receiver: a stale reply (previous page\'s data) is caught by the second read', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const send = rx.sendFeature.bind(rx);
+  let last, stale = 0;
+  rx.sendFeature = async (d) => {
+    await send(d);
+    if (d[0] === 0xfc) {
+      if (rx.log.at(-3) === 0x89 && !stale && last) { stale++; rx.out = last; } // page 3 gets page 2's data once
+      else last = Uint8Array.from(rx.out);
+    }
+  };
+  const ref = Uint8Array.from(MODELS[1].matrix);
+  rx.kb.matrices[0].set([9, 0, 0, 0], 48 * 4); // F8 -> macro, so page 3 differs from the reference
+  const m = await kb.getKeyMatrix(0, ref);
+  const want = rx.kb.matrices[0];
+  assert.deepEqual(Array.from(m.slice(0, want.length)), Array.from(want));
+});
+
+test('2.4 GHz receiver: a stale cached map heals (pages that differ are confirmed)', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const badCache = Uint8Array.from(rx.kb.matrices[0]);
+  badCache.fill(0, 48, 64); // cache from a corrupted read
+  const m = await kb.getKeyMatrix(0, badCache);
+  assert.deepEqual(Array.from(m.slice(48, 64)), Array.from(rx.kb.matrices[0].slice(48, 64)));
+  assert.equal(rx.kbSends, 9, 'page 0 read twice, the rest once');
 });

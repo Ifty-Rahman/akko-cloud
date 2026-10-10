@@ -326,7 +326,9 @@ async function readLayer() {
   renderKeys();
   renderEditor();
   try {
-    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile) : await S.kb.getFnMatrix(layerIndex());
+    // pages matching the last known map (cached, else the default) are accepted
+    // at once; others are read again until two reads agree (see readPaged)
+    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile, S.orig) : await S.kb.getFnMatrix(layerIndex(), S.orig);
     if (token !== S.keysToken) return; // a newer load replaced this one
     S.orig = Uint8Array.from(m);
     S.work = Uint8Array.from(m);

@@ -55,6 +55,8 @@ const RX_MAX_POLLS = 15; // vendor: wait_fb_write_finish gives up after 15 polls
 
 const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz (Fn + Y), or hold Fn + Y to pair it again.';
 const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
+const NOT_ANSWERED = 'The keyboard did not answer over the 2.4 GHz receiver. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
+const INCONSISTENT_REPLY = 'The keyboard’s replies over the 2.4 GHz receiver did not agree, so nothing was changed. Try again, or use the USB cable.';
 const NOT_CONFIRMED = 'The keyboard did not confirm the change over the 2.4 GHz receiver, so it may not have been saved. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
 
 const MAXSPEED = 4;
@@ -71,6 +73,7 @@ const WHITE_SUBSTITUTE = 0xfafffa; // the driver never sends pure white
 const RATE_CODES = { 1000: 1, 500: 2, 250: 4, 125: 8 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const keyOf = (obj, v) => Object.keys(obj).find((k) => obj[k] === v);
 
 export class KeyboardAsleepError extends Error {
@@ -240,7 +243,7 @@ export class Keyboard {
       await this.rxLinked();
       const r = await this.waitDelivered(expectReply);
       if (r === 'ok') return;
-      if (attempt >= 1) throw r === 'offline' ? new KeyboardAsleepError() : new Error(NOT_CONFIRMED);
+      if (attempt >= 1) throw r === 'offline' ? new KeyboardAsleepError() : new Error(expectReply ? NOT_ANSWERED : NOT_CONFIRMED);
     }
   }
 
@@ -622,9 +625,35 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- key matrices
-  async readPaged(cmd, index, pages) {
+  // Over the receiver a reply is occasionally wrong although the receiver
+  // reported it ready: a 16-byte block missing (zeros) or another page's data.
+  // Seen on a PC75B Plus+: keys 12-15 of a key-map read came back as 0 and
+  // were shown as disabled. Each page is therefore checked against `ref` (the
+  // last known contents, e.g. the cached map or the data just written): a page
+  // that matches is accepted, a page that differs is read again and accepted
+  // once two reads agree. Without `ref` every page is read twice.
+  async readPaged(cmd, index, pages, ref) {
     const out = new Uint8Array(pages * 64);
-    for (let p = 0; p < pages; p++) out.set(await this.query([cmd, index, p]), p * 64);
+    if (ref) {
+      const full = new Uint8Array(pages * 64); // model maps can be shorter than the pages read
+      full.set(Array.from(ref).slice(0, pages * 64));
+      ref = full;
+    }
+    for (let p = 0; p < pages; p++) {
+      const q = () => this.query([cmd, index, p]);
+      const want = ref?.subarray(p * 64, p * 64 + 64);
+      let page = await q();
+      if (this.dongle && !(want && sameBytes(page, want))) {
+        for (let n = 0; ; n++) {
+          const again = await q();
+          if (sameBytes(again, page)) break; // the same twice
+          page = again;
+          if (want && sameBytes(page, want)) break; // matches what we expected
+          if (n >= 2) throw new Error(INCONSISTENT_REPLY);
+        }
+      }
+      out.set(page, p * 64);
+    }
     return out;
   }
 
@@ -637,8 +666,8 @@ export class Keyboard {
     await sleep(gap);
   }
 
-  getKeyMatrix(profile = this.profile) {
-    return this.exclusive(() => this.readPaged(CMD.GET_KEYMATRIX, profile, 8));
+  getKeyMatrix(profile = this.profile, ref) {
+    return this.exclusive(() => this.readPaged(CMD.GET_KEYMATRIX, profile, 8, ref));
   }
 
   setKeyMatrix(matrix512, profile = this.profile) {
@@ -665,15 +694,15 @@ export class Keyboard {
   }
 
   setKeyMatrixVerified(matrix512, profile = this.profile) {
-    return this.verifiedWrite(() => this.setKeyMatrix(matrix512, profile), () => this.getKeyMatrix(profile), matrix512, 'key map');
+    return this.verifiedWrite(() => this.setKeyMatrix(matrix512, profile), () => this.getKeyMatrix(profile, matrix512), matrix512, 'key map');
   }
 
   setFnMatrixVerified(matrix512, fnIndex) {
-    return this.verifiedWrite(() => this.setFnMatrix(matrix512, fnIndex), () => this.getFnMatrix(fnIndex), matrix512, 'Fn layer');
+    return this.verifiedWrite(() => this.setFnMatrix(matrix512, fnIndex), () => this.getFnMatrix(fnIndex, matrix512), matrix512, 'Fn layer');
   }
 
-  getFnMatrix(fnIndex) {
-    return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8));
+  getFnMatrix(fnIndex, ref) {
+    return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8, ref));
   }
 
   setFnMatrix(matrix512, fnIndex) {
@@ -681,12 +710,8 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- macros
-  async getMacroRaw(index) {
-    return this.exclusive(async () => {
-      const out = new Uint8Array(256);
-      for (let p = 0; p < 4; p++) out.set(await this.query([CMD.GET_MACRO, index, p]), p * 64);
-      return out;
-    });
+  getMacroRaw(index, ref) {
+    return this.exclusive(() => this.readPaged(CMD.GET_MACRO, index, 4, ref));
   }
 
   // First page only: enough to tell whether a slot holds a macro.
@@ -700,7 +725,7 @@ export class Keyboard {
 
   setMacroVerified(index, events, repeatCount = 1) {
     const buf = encodeMacro(events, repeatCount);
-    return this.verifiedWrite(() => this.setMacro(index, events, repeatCount), () => this.getMacroRaw(index), buf, 'macro', buf.length);
+    return this.verifiedWrite(() => this.setMacro(index, events, repeatCount), () => this.getMacroRaw(index, buf), buf, 'macro', buf.length);
   }
 
   setMacro(index, events, repeatCount = 1) {

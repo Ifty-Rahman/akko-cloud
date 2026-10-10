@@ -112,6 +112,12 @@ Keyboard replies are not returned directly.
   keyboard that had not confirmed the first copy was seen to make it drop off
   the receiver (green LED blinking, power cycle needed).
 * **Writes**: send → poll `[FB]` until `d[3] = 1`. A write never sets `d[0]`.
+* **Replies can be wrong although `d[0]` said ready**: about one 64-byte page in
+  40 came back with a 16-byte block of zeros or another page's data (keys
+  12–15 of a key map read as disabled). Akko Cloud compares each page with the
+  last known contents (cached map, or the data just written) and re-reads any
+  page that differs until two reads agree. In 10 key-map reads on a PC75B Plus+
+  this caught 2 bad pages, and all 10 results were correct.
 * **Queries**: send → poll until `d[0] = 1` → `[FC]` → read the reply.
 * `d[2] = 1` means the keyboard is asleep (its 2.4 GHz sleep timer) or out of
   range. The receiver cannot wake it; a key press on the keyboard does. The

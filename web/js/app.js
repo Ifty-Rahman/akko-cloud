@@ -1,14 +1,17 @@
 import {
-  LAYOUT, KNOB, EXTRA_SLOTS, MAIN_LIGHT_TYPES, LOGO_LIGHT_TYPES, LIGHT_NAMES, MODELS, findModel,
+  LAYOUT, KNOB, MAIN_LIGHT_TYPES, LOGO_LIGHT_TYPES, LIGHT_NAMES, MODELS, findModel,
 } from './models.js';
 import {
   HID_NAMES, CODE_TO_HID, FUNCTION_ACTIONS, MOUSE_ACTIONS, MACRO_MODES, MACRO_LIMIT,
-  encodeAction, decodeAction, describeAction, shortLabel, hidName, macroByteLength, rgbToHex, hexToRgb,
+  encodeAction, decodeAction, describeAction, hidName, macroByteLength, rgbToHex, hexToRgb,
 } from './codec.js';
 import { Keyboard } from './protocol.js';
 import { WebHidTransport, DemoTransport } from './transports.js';
 import { MusicFollower, ScreenFollower } from './host-effects.js';
 import { KEYBINDING_SECTIONS } from './keybindings.js';
+import { keycap, renderCap } from './keycap.js';
+import { icon } from './icons.js';
+import { AKKO_MODEL_NAMES } from './akko-names.js';
 
 // ------------------------------------------------------------------ helpers
 const $ = (s, root = document) => root.querySelector(s);
@@ -143,12 +146,11 @@ async function connect(transport) {
         if ($('#busy').hidden) toast('Keyboard not answering — press any key on it', true);
       } else if (busyLabel) el.textContent = busyLabel;
     };
+    // Only what the dashboard needs up front; the rest loads in the background.
     const id = await kb.getDeviceId();
-    const fw = await kb.getFirmwareVersion().catch(() => undefined);
     const profile = await kb.getProfile().catch(() => 0);
-    if (transport.dongle) await kb.getLinkStatus().catch(() => undefined);
     Object.assign(S, {
-      kb, transport, id, fw, profile, model: findModel(id), layer: 'base', selected: undefined,
+      kb, transport, id, fw: undefined, profile, model: findModel(id), layer: 'base', selected: undefined,
       loaded: new Set(), macroCache: new Map(),
     });
     transport.onDisconnect(() => {
@@ -157,6 +159,32 @@ async function connect(transport) {
     });
     showApp();
   });
+  const kb = S.kb;
+  if (!kb) return;
+  // queued behind the key-map read, so the layout appears first
+  S.fw = await kb.getFirmwareVersion().catch(() => undefined);
+  if (S.transport?.dongle) await kb.getLinkStatus().catch(() => undefined);
+  if (S.kb === kb) renderDeviceStrip();
+}
+
+// Name from the model id the keyboard reports (Akko's own id → name table),
+// falling back to the USB product name the keyboard announces.
+function modelName() {
+  const fromTable = AKKO_MODEL_NAMES[S.id & 0x7fffffff];
+  if (fromTable) return fromTable;
+  const usb = (S.transport?.name || '').replace(/^\s*ROYUAN\s+/i, '').trim();
+  return usb || 'Akko keyboard';
+}
+
+function renderDeviceStrip() {
+  const link = S.transport.kind === 'demo' ? 'Demo (simulated)' : S.transport.dongle ? '2.4 GHz receiver' : 'USB cable';
+  const fw = S.fw !== undefined ? `v${(S.fw >> 8).toString(16)}.${(S.fw & 255).toString(16).padStart(2, '0')}` : '…';
+  $('#deviceStrip').replaceChildren(
+    h('span', {}, 'Keyboard ', h('b', {}, modelName())),
+    h('span', {}, 'Firmware ', h('b', {}, fw)),
+    h('span', {}, 'Connection ', h('b', {}, link)),
+    ...(S.kb.battery !== undefined ? [h('span', {}, 'Battery ', h('b', {}, `${S.kb.battery}%`))] : []),
+  );
 }
 
 async function disconnect() {
@@ -176,34 +204,36 @@ function showApp() {
   $('#connectView').hidden = true;
   $('#appView').hidden = false;
   $('#deviceSummary').hidden = false;
-  $('#deviceName').textContent = m.displayName;
-  const sel = $('#profileSelect');
-  sel.replaceChildren(...Array.from({ length: m.profiles }, (_, i) => h('option', { value: i }, `${i + 1}`)));
-  sel.value = String(S.profile);
-  const link = { usb: 'USB (this device)', demo: 'Demo (simulated)' }[S.transport.kind];
-  const fw = S.fw !== undefined ? `v${(S.fw >> 8).toString(16)}.${(S.fw & 255).toString(16).padStart(2, '0')}` : '—';
-  $('#deviceStrip').replaceChildren(
-    h('span', {}, 'Model ', h('b', {}, m.displayName)),
-    h('span', {}, 'Device id ', h('b', {}, `${S.id & 0x7fffffff}${S.id & 0x80000000 ? ' (2.4 GHz)' : ''}`)),
-    h('span', {}, 'Firmware ', h('b', {}, fw)),
-    h('span', {}, 'Link ', h('b', {}, link + (S.transport.dongle ? ' · 2.4 GHz receiver' : ''))),
-    ...(S.kb.battery !== undefined ? [h('span', {}, 'Battery ', h('b', {}, `${S.kb.battery}%`))] : []),
-  );
+  $('#deviceName').textContent = modelName();
+  renderProfiles();
+  renderDeviceStrip();
   if (S.transport.dongle) toast('Connected through the 2.4 GHz receiver. Akko officially supports customisation over the USB cable — use it if a change does not stick.');
-  if (m.unknownId !== undefined) toast(`Unrecognised model id ${m.unknownId}. Using the standard PC75B layout.`, true);
+  if (m.unknownId !== undefined) toast(`${modelName()} is not a PC75B. Akko Cloud is built for the PC75B family, so its layout and features may not match.`, true);
   selectTab('keys');
 }
 
-$('#profileSelect').addEventListener('change', async (e) => {
-  const p = Number(e.target.value);
+function renderProfiles() {
+  const seg = $('#profileSeg');
+  seg.replaceChildren(...Array.from({ length: S.model.profiles }, (_, i) => h('button', {
+    type: 'button',
+    'aria-pressed': String(i === S.profile),
+    title: `Profile ${i + 1}`,
+    onclick: () => switchProfile(i),
+  }, String(i + 1))));
+}
+
+async function switchProfile(p) {
+  if (p === S.profile || !S.kb) return;
+  if (isDirty() && !confirm('Discard unsaved key changes?')) return;
   await busy(`Switching to profile ${p + 1}…`, async () => {
     await S.kb.setProfile(p);
     S.profile = p;
     S.loaded.clear();
     S.selected = undefined;
-    await loadTab(currentTab());
+    renderProfiles();
   });
-});
+  loadTab(currentTab());
+}
 
 // ------------------------------------------------------------------ tabs
 const currentTab = () => $('#tabs [aria-selected="true"]').dataset.tab;
@@ -216,6 +246,12 @@ function selectTab(name) {
 async function loadTab(name) {
   if (!S.kb) return;
   if (S.loaded.has(name)) return;
+  if (name === 'keys') {
+    // non-blocking: the layout is drawn at once and filled in when the read finishes
+    S.loaded.add('keys');
+    try { await loadKeys(); } catch (e) { S.loaded.delete('keys'); toast(e?.message || String(e), true); }
+    return;
+  }
   const loaders = { keys: loadKeys, lighting: loadLighting, macros: loadMacros, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
   const ok = await busy('Reading from keyboard…', async () => {
     await loaders[name]();
@@ -233,11 +269,23 @@ const isFnLayer = () => S.layer !== 'base';
 
 function slotName(idx) {
   if (idx === KNOB.press) return 'Knob press';
-  if (idx === KNOB.clockwise) return 'Knob turn right';
-  if (idx === KNOB.counterClockwise) return 'Knob turn left';
-  const ex = EXTRA_SLOTS.find((e) => e.idx === idx);
-  if (ex) return ex.label;
+  if (idx === KNOB.clockwise) return 'Knob turned right';
+  if (idx === KNOB.counterClockwise) return 'Knob turned left';
   return describeAction(decodeAction(slot(S.model.matrix, idx)));
+}
+
+// ---- key map loading: draw instantly, then read the real map in the background
+const layerIndex = () => (S.layer === 'base' ? S.profile : Number(S.layer.slice(2)));
+const cacheKey = () => `akko-matrix:${S.id & 0x7fffffff}:${S.layer}:${layerIndex()}`;
+function cachedMatrix() {
+  try {
+    const v = localStorage.getItem(cacheKey());
+    if (v && v.length === 1024) return Uint8Array.from(v.match(/../g), (x) => parseInt(x, 16));
+  } catch { /* storage unavailable */ }
+  return isFnLayer() ? new Uint8Array(512) : Uint8Array.from(S.model.matrix);
+}
+function storeMatrix(m) {
+  try { localStorage.setItem(cacheKey(), fmtHex(m).replaceAll(' ', '')); } catch { /* ignore */ }
 }
 
 async function loadKeys() {
@@ -246,79 +294,133 @@ async function loadKeys() {
     'aria-pressed': String(l.id === S.layer),
     onclick: async (ev) => {
       const btn = ev.currentTarget;
-      if (S.layer === l.id) return;
+      if (S.layer === l.id || S.keysLoading) return;
       if (isDirty() && !confirm('Discard unsaved key changes?')) return;
       S.layer = l.id;
       S.selected = undefined;
       $$('button', seg).forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
-      await busy('Reading layer…', readLayer);
+      await readLayer();
     },
   }, l.label)));
   await readLayer();
 }
 
 async function readLayer() {
-  const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile) : await S.kb.getFnMatrix(Number(S.layer.slice(2)));
-  S.orig = Uint8Array.from(m);
-  S.work = Uint8Array.from(m);
+  const token = (S.keysToken = (S.keysToken ?? 0) + 1);
+  S.orig = cachedMatrix();
+  S.work = Uint8Array.from(S.orig);
+  setKeysLoading(true);
   renderKeys();
   renderEditor();
+  try {
+    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile) : await S.kb.getFnMatrix(layerIndex());
+    if (token !== S.keysToken) return; // a newer load replaced this one
+    S.orig = Uint8Array.from(m);
+    S.work = Uint8Array.from(m);
+    storeMatrix(m);
+  } finally {
+    if (token === S.keysToken) {
+      setKeysLoading(false);
+      renderKeys();
+      renderEditor();
+    }
+  }
 }
 
-const isDirty = () => S.orig && S.work && !eqBytes(Array.from(S.orig), Array.from(S.work));
+function setKeysLoading(on) {
+  S.keysLoading = on;
+  $('#kbKeys').classList.toggle('loading', on);
+  $('#keysLoading').hidden = !on;
+}
+
+const isDirty = () => !S.keysLoading && S.orig && S.work && !eqBytes(Array.from(S.orig), Array.from(S.work));
 function updateDirty() {
   const d = isDirty();
   $('#keysDirty').hidden = !d;
   $('#keysWriteBtn').disabled = !d;
 }
 
-function keyLabel(idx) {
-  const b = slot(S.work, idx);
-  if (isFnLayer() && eqBytes(b, [0, 0, 0, 0])) return { text: '', fnDefault: true };
-  return { text: shortLabel(b), special: decodeAction(b).type !== 'key' };
+const capFor = (idx) => keycap(slot(S.work, idx), { fnLayer: isFnLayer() });
+
+function keyButton(idx, attrs, cap) {
+  const changed = !eqBytes(slot(S.work, idx), slot(S.orig, idx));
+  const el = h('button', {
+    ...attrs,
+    class: [attrs.class, changed && 'changed', S.selected === idx && 'selected', cap.special && 'special'].filter(Boolean).join(' '),
+    'aria-label': `${slotName(idx)}: ${isFnLayer() && !cap.special && !cap.text ? 'built-in Fn function' : describeAction(decodeAction(slot(S.work, idx)))}`,
+    'data-idx': idx,
+    onclick: (e) => !S.keysLoading && selectKey(idx, e.currentTarget),
+  });
+  renderCap(el, cap);
+  if (cap.pop) POPS.set(el, cap.pop);
+  return el;
 }
 
 function renderKeys() {
   const kb = $('#kbKeys');
-  kb.replaceChildren();
-  for (const k of LAYOUT) {
-    const lab = keyLabel(k.idx);
-    const changed = !eqBytes(slot(S.work, k.idx), slot(S.orig, k.idx));
-    const remapped = !isFnLayer() && !eqBytes(slot(S.work, k.idx), slot(S.model.matrix, k.idx));
-    const el = h('button', {
-      class: ['key', changed && 'changed', S.selected === k.idx && 'selected', (lab.special || remapped) && 'special'].filter(Boolean).join(' '),
-      style: `--x:${k.x};--y:${k.y};--w:${k.w}`,
-      title: `${slotName(k.idx)} → ${lab.fnDefault ? 'firmware default' : describeAction(decodeAction(slot(S.work, k.idx)))}`,
-      onclick: () => selectKey(k.idx),
-    }, h('span', {}, lab.text === '★' ? describeAction(decodeAction(slot(S.work, k.idx))).slice(0, 10) : lab.text));
-    kb.append(el);
-  }
-  kb.append(h('button', {
-    class: 'knob' + (S.selected === KNOB.press ? ' selected' : ''),
-    title: 'Knob press',
-    onclick: () => selectKey(KNOB.press),
-  }, '⟳'));
-  const extras = $('#extraSlots');
-  const chips = [
-    { idx: KNOB.clockwise, label: 'Knob ↻' },
-    { idx: KNOB.counterClockwise, label: 'Knob ↺' },
-    { idx: KNOB.press, label: 'Knob press' },
-    ...EXTRA_SLOTS.map((e) => ({ idx: e.idx, label: e.label })),
-  ];
-  extras.replaceChildren(...chips.map((c) => {
-    const changed = !eqBytes(slot(S.work, c.idx), slot(S.orig, c.idx));
-    return h('button', {
-      class: ['chip', S.selected === c.idx && 'selected', changed && 'changed'].filter(Boolean).join(' '),
-      onclick: () => selectKey(c.idx),
-    }, `${c.label}: ${keyLabel(c.idx).fnDefault ? 'default' : describeAction(decodeAction(slot(S.work, c.idx)))}`);
-  }));
+  hidePop();
+  kb.replaceChildren(...LAYOUT.map((k) => keyButton(k.idx, { class: 'key', style: `--x:${k.x};--y:${k.y};--w:${k.w}` }, capFor(k.idx))));
+  kb.append(keyButton(KNOB.press, { class: 'knob' }, capFor(KNOB.press)));
+  const knobRow = (idx, iconName, label) => {
+    const cap = capFor(idx);
+    const b = keyButton(idx, { class: 'knob-action' }, cap);
+    b.prepend(h('span', { class: 'knob-what' }, h('span', { class: 'knob-dir', innerHTML: icon(iconName) }), label));
+    b.append(h('span', { class: 'knob-desc' }, isFnLayer() && !cap.special && !cap.text ? 'Built-in' : describeAction(decodeAction(slot(S.work, idx)))));
+    return b;
+  };
+  $('#knobPanel').replaceChildren(
+    h('span', { class: 'knob-title' }, 'Knob'),
+    knobRow(KNOB.counterClockwise, 'rotateLeft', 'Turn left'),
+    knobRow(KNOB.clockwise, 'rotateRight', 'Turn right'),
+    knobRow(KNOB.press, 'knobPress', 'Press'),
+  );
   updateDirty();
 }
 
-function selectKey(idx) {
+// ---- pop-up with the full meaning of a keycap
+const POPS = new WeakMap();
+function showPop(el) {
+  const pop = POPS.get(el);
+  const box = $('#keyPop');
+  if (!pop) return hidePop();
+  box.replaceChildren(
+    h('div', { class: 'pop-title' }, pop.title),
+    ...(pop.keys ? [h('div', { class: 'pop-keys' }, pop.keys.flatMap((k, i) => (i ? [h('span', { class: 'plus' }, '+'), h('kbd', {}, k)] : [h('kbd', {}, k)])))] : []),
+    ...(pop.text ? [h('div', { class: 'pop-text' }, pop.text)] : []),
+  );
+  box.hidden = false;
+  const r = el.getBoundingClientRect();
+  const bw = box.offsetWidth;
+  const bh = box.offsetHeight;
+  const left = Math.min(window.innerWidth - bw - 8, Math.max(8, r.left + r.width / 2 - bw / 2));
+  const above = r.top - bh - 8;
+  box.style.left = `${left + window.scrollX}px`;
+  box.style.top = `${(above > 8 ? above : r.bottom + 8) + window.scrollY}px`;
+}
+function hidePop() {
+  const box = $('#keyPop');
+  if (box) box.hidden = true;
+}
+for (const id of ['#kbKeys', '#knobPanel']) {
+  const root = $(id);
+  root.addEventListener('pointerover', (e) => { const el = e.target.closest('button'); if (el && root.contains(el)) showPop(el); });
+  root.addEventListener('pointerleave', hidePop);
+  root.addEventListener('focusin', (e) => showPop(e.target.closest('button')));
+  root.addEventListener('focusout', hidePop);
+}
+window.addEventListener('scroll', hidePop, { passive: true });
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest?.('#kbKeys, #knobPanel')) hidePop();
+});
+
+function selectKey(idx, fromEl) {
+  const inPanel = fromEl?.closest?.('#knobPanel');
   S.selected = idx;
   renderKeys();
   renderEditor();
+  // touch screens have no hover: show the pop-up for the tapped key instead
+  const el = $(`${inPanel ? '#knobPanel' : '#kbKeys'} [data-idx="${idx}"]`);
+  if (el) showPop(el);
 }
 
 const hidOptions = (selected) => {
@@ -363,7 +465,9 @@ function renderEditor() {
   const fnDefault = isFnLayer() && cur.type === 'disabled';
   const kinds = [
     ['key', 'Single key'], ['combo', 'Key combination'], ['function', 'Media & system'], ['mouse', 'Mouse'],
-    ['macro', 'Macro'], ['disabled', isFnLayer() ? 'Firmware default (clear)' : 'Disabled'], ['raw', 'Raw bytes (advanced)'],
+    ['macro', 'Macro'], ['disabled', isFnLayer() ? 'Built-in Fn function' : 'Disabled'],
+    // unknown firmware functions can be kept, but not typed in by hand
+    ...(cur.type === 'raw' ? [['raw', 'Keep built-in function']] : []),
   ];
   const typeSel = h('select', {}, kinds.map(([v, l]) => h('option', { value: v, selected: v === cur.type }, l)));
   const body = h('div', { class: 'grid' });
@@ -398,16 +502,12 @@ function renderEditor() {
         h('p', { class: 'muted small' }, 'Edit the macro contents on the Macros tab.'));
       read = () => ({ type: 'macro', index: Number(sl.value), mode: md.value });
     } else if (t === 'disabled') {
-      body.append(h('p', { class: 'muted' }, isFnLayer() ? 'The key keeps its built-in Fn behaviour.' : 'The key will do nothing.'));
+      body.append(h('p', { class: 'muted' }, isFnLayer() ? 'The key keeps the keyboard’s built-in Fn behaviour (see the Shortcuts tab).' : 'The key will do nothing.'));
       read = () => ({ type: 'disabled' });
     } else {
-      const inp = h('input', { type: 'text', value: fmtHex(slot(S.work, idx)), spellcheck: false });
-      body.append(h('label', { class: 'field' }, h('span', {}, '4 bytes, hex'), inp));
-      read = () => {
-        const bytes = inp.value.trim().split(/[\s,]+/).map((x) => parseInt(x, 16));
-        if (bytes.length !== 4 || bytes.some((b) => !(b >= 0 && b <= 255))) throw new Error('Enter exactly 4 hex bytes');
-        return { type: 'raw', bytes };
-      };
+      const bytes = slot(S.work, idx);
+      body.append(h('p', { class: 'muted' }, 'This key has a special function set by the keyboard’s firmware. It stays as it is.'));
+      read = () => ({ type: 'raw', bytes });
     }
   }
   typeSel.addEventListener('change', build);
@@ -431,7 +531,7 @@ function renderEditor() {
   };
   ed.replaceChildren(
     h('div', { class: 'editor-head' }, h('h2', {}, slotName(idx)),
-      h('span', { class: 'now' }, 'currently: ', h('b', {}, fnDefault ? 'firmware default' : describeAction(cur)))),
+      h('span', { class: 'now' }, 'currently: ', h('b', {}, fnDefault ? 'built-in Fn function' : describeAction(cur)))),
     h('div', { class: 'grid' }, h('label', { class: 'field' }, h('span', {}, 'Action type'), typeSel)),
     h('div', { style: 'height:12px' }),
     body,
@@ -468,12 +568,12 @@ async function loadLighting() {
     updateHostCard();
   });
   if (S.model.logo) {
-    renderLightCard($('#logoLightCard'), 'PC case light (RGB strip)', LOGO_LIGHT_TYPES, S.logo ?? { type: 'LightOff' }, async (l) => {
+    renderLightCard($('#logoLightCard'), 'LED Strip', LOGO_LIGHT_TYPES, S.logo ?? { type: 'LightOff' }, async (l) => {
       await S.kb.setLogoLight(l);
       S.logo = l;
     });
   } else {
-    $('#logoLightCard').replaceChildren(h('h2', {}, 'PC case light (RGB strip)'), h('p', { class: 'muted' }, 'This model has no separately controllable case light.'));
+    $('#logoLightCard').replaceChildren(h('h2', {}, 'LED Strip'), h('p', { class: 'muted' }, 'This model has no LED strip.'));
   }
   renderPaint();
   updateHostCard();
@@ -490,7 +590,6 @@ function renderLightCard(card, title, types, state, onApply) {
   const typeSel = h('select', {}, types.map((t) => h('option', { value: t.type, selected: t.type === state.type }, LIGHT_NAMES[t.type] ?? t.type)));
   const area = h('div', { class: 'form' });
   const draft = { ...state };
-  const preview = h('div', { class: 'swatch' });
 
   function build() {
     const def = types.find((t) => t.type === typeSel.value) ?? types[0];
@@ -518,17 +617,30 @@ function renderLightCard(card, title, types, state, onApply) {
     } else delete draft.option;
     if (def.rgb) {
       draft.rgb = draft.rgb ?? 0xff0000;
-      const color = h('input', { type: 'color', value: rgbToHex(draft.rgb), disabled: !!draft.dazzle, oninput: (e) => { draft.rgb = hexToRgb(e.target.value).value; preview.style.background = e.target.value; } });
-      preview.style.background = draft.dazzle ? 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' : rgbToHex(draft.rgb);
-      const rainbow = h('label', { class: 'switch' }, h('input', {
-        type: 'checkbox', checked: !!draft.dazzle,
-        onchange: (e) => {
-          draft.dazzle = e.target.checked;
-          color.disabled = draft.dazzle;
-          preview.style.background = draft.dazzle ? 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' : rgbToHex(draft.rgb);
-        },
-      }), h('span', {}, 'Rainbow colours'));
-      area.append(h('div', { class: 'inline' }, preview, color, rainbow));
+      // One colour box: shows the rainbow when rainbow mode is on, otherwise the
+      // chosen colour. Clicking it opens the colour picker.
+      const RAINBOW = 'conic-gradient(from 90deg, #ff3b3b, #ffb13b, #f5ff3b, #3bff6a, #3bd8ff, #4b5bff, #d53bff, #ff3b3b)';
+      const box = h('label', { class: 'colour-box', title: 'Choose colour' });
+      const picker = h('input', { type: 'color', value: rgbToHex(draft.rgb), 'aria-label': 'Choose colour' });
+      const rainbowInput = h('input', { type: 'checkbox', checked: !!draft.dazzle });
+      const paint = () => {
+        box.style.background = draft.dazzle ? RAINBOW : rgbToHex(draft.rgb);
+        box.classList.toggle('is-rainbow', !!draft.dazzle);
+      };
+      picker.addEventListener('input', (e) => {
+        draft.rgb = hexToRgb(e.target.value).value;
+        draft.dazzle = false;
+        rainbowInput.checked = false;
+        paint();
+      });
+      rainbowInput.addEventListener('change', () => {
+        draft.dazzle = rainbowInput.checked;
+        paint();
+      });
+      box.append(picker);
+      paint();
+      area.append(h('div', { class: 'field' }, h('span', {}, 'Colour'),
+        h('div', { class: 'inline' }, box, h('label', { class: 'switch' }, rainbowInput, h('span', {}, 'Rainbow colours')))));
     } else {
       delete draft.rgb;
       delete draft.dazzle;
@@ -865,7 +977,7 @@ $('#importFile').addEventListener('change', async (e) => {
     if (c) {
       await kb.setProfile(c.profile ?? 0);
       S.profile = c.profile ?? 0;
-      $('#profileSelect').value = String(S.profile);
+      renderProfiles();
       if (c.picture) await kb.setUserPicture(unhex(c.picture));
       if (c.light) await kb.setLight(c.light);
       if (c.logo && S.model.logo) await kb.setLogoLight(c.logo);

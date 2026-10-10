@@ -9,7 +9,7 @@ receiver) and configure it over [WebHID](https://developer.mozilla.org/docs/Web/
 | Key remapping on 4 profiles + 2 Fn layers (keys, combos, media/system, mouse, macros, profile switching, disable), knob press and rotation | ✅ |
 | Macros: record from your keyboard, edit steps and delays, 3 playback modes, 20 slots | ✅ |
 | Backlight: all 24 effects, brightness, speed, colour / rainbow, direction | ✅ |
-| Logo light (models that have one) | ✅ |
+| LED strip (models that have one) | ✅ |
 | Custom per-key colours (painter) | ✅ |
 | Music rhythm and screen-colour sync (streams from the browser) | ✅ |
 | Polling rate, debounce, Win-key lock, WASD↔arrows, LED off, power-saving, wireless sleep timers | ✅ |

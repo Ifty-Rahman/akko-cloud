@@ -88,7 +88,12 @@ input[type='color'] { width: 44px; height: 32px; border: 1px solid var(--line); 
 .brand svg .k { fill: var(--accent-ink); }
 .device-summary { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-wrap: wrap; }
 .device-summary .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
-.profile-pick { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.profile-pick { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.88rem; }
+.profile-seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+.profile-seg button { min-height: 28px; min-width: 30px; padding: 0 9px; border: none; border-radius: 7px; background: transparent; color: var(--muted);
+  font-weight: 600; font-variant-numeric: tabular-nums; justify-content: center; }
+.profile-seg button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.profile-seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
 #themeBtn { margin-left: 4px; }
 .topbar > #themeBtn:only-of-type { margin-left: auto; }
 
@@ -132,16 +137,41 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 .key.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .key.special span { color: var(--accent); font-weight: 600; }
 .knob { position: absolute; left: calc(15.25 * var(--u)); top: 0; width: calc(var(--u) - 4px); height: calc(var(--u) - 4px); border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, var(--key-top), var(--key)); border: 1px solid var(--line); padding: 0; min-height: 0; justify-content: center; font-size: 11px; color: var(--muted); }
+  background: radial-gradient(circle at 35% 30%, var(--key-top), var(--key)); border: 1px solid var(--line); padding: 0; min-height: 0; justify-content: center; color: var(--muted); }
+.knob.special .cap { color: var(--accent); }
 .knob.selected { box-shadow: 0 0 0 2px var(--accent); }
 .kb.paint .key::before { background: var(--c, var(--key-top)); }
 .kb.paint .key span { color: transparent; }
 .kb.paint .key:hover { border-color: var(--accent); }
 
-.extras { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 16px; justify-content: center; }
-.chip { font-size: 0.82rem; padding: 4px 10px; min-height: 0; border-radius: 99px; }
-.chip.selected { border-color: var(--accent); background: var(--accent-soft); }
-.chip.changed { border-color: var(--accent); }
+.cap { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; min-width: 0; max-width: 100%; padding: 0 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cap .ki { width: clamp(14px, calc(var(--u) * 0.4), 22px); height: clamp(14px, calc(var(--u) * 0.4), 22px); }
+.key.special .cap { color: var(--accent); font-weight: 600; }
+.kb.loading .key, .kb.loading .knob { pointer-events: none; }
+.kb.loading .key::before { animation: keyPulse 1.2s ease-in-out infinite; }
+@keyframes keyPulse { 50% { opacity: 0.55; } }
+.loading-note { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.9rem; margin: 0 0 8px; }
+.spinner.small { width: 14px; height: 14px; border-width: 2px; border-color: var(--line); border-top-color: var(--accent); }
+
+.knob-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 18px; }
+.knob-title { color: var(--muted); font-size: 0.85rem; margin-right: 4px; }
+.knob-action { display: inline-flex; align-items: center; gap: 8px; border-radius: 99px; padding: 4px 12px 4px 6px; min-height: 36px; font-size: 0.85rem; }
+.knob-action .knob-what { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.knob-action .knob-dir .ki { width: 16px; height: 16px; }
+.knob-action .cap { width: 26px; height: 26px; border-radius: 7px; background: var(--key-top); border: 1px solid var(--line); padding: 0; }
+.knob-action .cap .ki { width: 16px; height: 16px; }
+.knob-action .knob-desc { color: var(--text); }
+.knob-action.special .cap { color: var(--accent); }
+.knob-action.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.knob-action.changed { border-color: var(--accent); background: var(--accent-soft); }
+
+.key-pop { position: absolute; z-index: 70; max-width: 260px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 8px 12px; font-size: 0.85rem; pointer-events: none; }
+.key-pop .pop-title { font-weight: 600; }
+.key-pop .pop-keys { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.key-pop .pop-keys .plus { color: var(--muted); }
+.key-pop .pop-text { color: var(--muted); margin-top: 4px; }
 
 .editor .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -166,6 +196,11 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 .meter { display: flex; gap: 2px; align-items: flex-end; height: 40px; }
 .meter i { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 2px; }
 .swatch { width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--line); }
+.colour-box { position: relative; width: 48px; height: 36px; border-radius: 9px; border: 1px solid var(--line); cursor: pointer;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--panel) 70%, transparent); overflow: hidden; }
+.colour-box:hover { border-color: var(--accent); }
+.colour-box:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.colour-box input[type='color'] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; padding: 0; }
 
 .macro-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; }
 .macro-slots ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 520px; overflow: auto; }

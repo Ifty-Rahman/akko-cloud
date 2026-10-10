@@ -26,7 +26,8 @@ export const SHORT_NAMES = {
   40: 'Enter', 41: 'Esc', 42: 'Bksp', 43: 'Tab', 57: 'Caps', 70: 'PrtSc', 71: 'ScrLk',
   73: 'Ins', 74: 'Home', 75: 'PgUp', 76: 'Del', 77: 'End', 78: 'PgDn', 79: '→', 80: '←',
   81: '↓', 82: '↑', 224: 'Ctrl', 225: 'Shift', 226: 'Alt', 227: 'Win', 228: 'Ctrl',
-  229: 'Shift', 230: 'Alt', 231: 'Win', 44: '', 101: 'Menu',
+  229: 'Shift', 230: 'Alt', 231: 'Win', 44: '', 101: 'Menu', 83: 'NumLk', 72: 'Pause',
+  88: 'KP Ent', 135: 'Ro', 139: 'Muhen', 138: 'Henk',
 };
 
 // KeyboardEvent.code -> HID usage (for "press a key" capture and macro recording)
@@ -173,7 +174,7 @@ export function describeAction(a) {
     case 'function':
     case 'mouse': return a.label;
     case 'macro': return `Macro ${a.index + 1}`;
-    default: return 'Raw ' + a.bytes.map((x) => x.toString(16).padStart(2, '0')).join(' ');
+    default: return 'Built-in function';
   }
 }
 

@@ -495,7 +495,7 @@ export class Keyboard {
       case 'LightNeon': n = 3; o = sp; u = v; break;
       case 'LightWave': n = 4; o = sp; u = v; i = ((WAVEOP[l.option] ?? WAVEOP.right) << 4) | y; break;
       case 'LightSnake': n = 5; o = sp; u = v; i = l.option === undefined || l.option === 'z' ? y : 16 | y; break;
-      default: throw new Error('unsupported logo light type ' + l.type);
+      default: throw new Error('unsupported LED strip effect ' + l.type);
     }
     const a = [CMD.SET_SLEDPARAM, n, o, u, i, 0, 0, 0];
     if (l.rgb !== undefined) {

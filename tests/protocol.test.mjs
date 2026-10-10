@@ -282,3 +282,29 @@ test('2.4 GHz receiver: status is polled at the vendor pace (>= 100 ms apart)', 
   const gaps = times.slice(2).map((t, i) => t - times[i + 1]);
   assert.ok(gaps.length >= 1 && gaps.every((g) => g >= 95), `poll gaps ${gaps.map(Math.round)}`);
 });
+
+test('keycaps: icons for media/brightness, combo icon + pop-up keys, friendly unknowns', async () => {
+  const { keycap } = await import('../web/js/keycap.js');
+  const { icon } = await import('../web/js/icons.js');
+  assert.equal(keycap([3, 0, 233, 0]).icon, 'volUp');
+  assert.equal(keycap([3, 0, 234, 0]).icon, 'volDown');
+  assert.equal(keycap([3, 0, 111, 0]).icon, 'brightUp');
+  assert.equal(keycap([3, 0, 112, 0]).icon, 'brightDown');
+  assert.equal(keycap([10, 15, 0, 0]).icon, 'knob');
+  const combo = keycap([0, 226, 11, 0]);
+  assert.equal(combo.icon, 'combo');
+  assert.deepEqual(combo.pop.keys, ['Alt', 'H']);
+  assert.deepEqual(keycap([0, 0, 227, 23]).pop.keys, ['L Win', 'T']); // win+T stored as key pair
+  const raw = keycap([13, 2, 1, 0]);
+  assert.equal(raw.icon, 'sparkle');
+  assert.ok(!/[0-9a-f]{2} [0-9a-f]{2}/.test(raw.pop.text), 'no hex shown to users');
+  assert.equal(keycap([0, 0, 0, 0], { fnLayer: true }).text, '');
+  assert.equal(keycap([9, 1, 2, 0]).text, 'M3');
+  assert.equal(keycap([0, 0, 41, 0]).text, 'Esc');
+  // every visible label fits on a 1u keycap; anything longer has a pop-up
+  for (let hid = 4; hid <= 231; hid++) {
+    const c = keycap([0, 0, hid, 0]);
+    if ((c.text ?? '').length > 6) assert.ok(c.pop, `HID ${hid} label "${c.text}" needs a pop-up`);
+  }
+  for (const n of ['volUp', 'volDown', 'brightUp', 'brightDown', 'combo', 'sparkle', 'knob', 'rotateLeft', 'rotateRight', 'knobPress']) assert.ok(icon(n).startsWith('<svg'), n);
+});

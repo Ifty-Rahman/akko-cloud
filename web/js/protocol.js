@@ -51,6 +51,11 @@ export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
 const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
+const RX_MAX_POLLS = 15; // vendor: wait_fb_write_finish gives up after 15 polls
+
+const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz (Fn + Y), or hold Fn + Y to pair it again.';
+const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
+const NOT_CONFIRMED = 'The keyboard did not confirm the change over the 2.4 GHz receiver, so it may not have been saved. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
 
 const MAXSPEED = 4;
 // Colour-mode nibble (low 4 bits of the option byte). The vendor driver uses
@@ -179,38 +184,56 @@ export class Keyboard {
     throw new KeyboardAsleepError();
   }
 
-  // Wait until the receiver confirms delivery (and, for queries, that the reply arrived).
-  async waitDelivered(expectReply, timeoutMs = 3000) {
-    const t0 = Date.now();
-    let sawPending = false;
+  // [FD] -> AA 55 01 while a keyboard is paired with the receiver.
+  async rxLinked() {
+    await this.rawSend([RX.IS24]);
+    const r = await this.rawRecv();
+    return r[0] === 0xaa && r[1] === 0x55 && r[2] === 1;
+  }
+
+  // The vendor helper's wait_fb_write_finish: at most RX_MAX_POLLS polls of
+  // [FB], 100 ms apart. For queries the reply is ready when is_ready_read is set.
+  async waitDelivered(expectReply) {
     let offlineSince = null;
-    await this.rxPoll(50);
-    while (Date.now() - t0 < timeoutMs * this.rxPace) {
+    for (let i = 0; i < RX_MAX_POLLS; i++) {
+      await this.rxPoll(RX_POLL_MS);
       const s = await this.rxStatus();
       if (!s.online) {
         offlineSince ??= Date.now();
-        if (Date.now() - offlineSince >= OFFLINE_GRACE_MS * this.rxPace) return 'offline';
-      } else {
-        offlineSince = null;
-        const done = expectReply ? s.readyRead : s.writeFinish;
-        if (!done) sawPending = true;
-        else if (sawPending || Date.now() - t0 > 150 * this.rxPace) return 'ok';
+        continue;
       }
-      await this.rxPoll(RX_POLL_MS);
+      offlineSince = null;
+      if (expectReply ? s.readyRead : s.writeFinish) return 'ok';
     }
-    return 'timeout';
+    return offlineSince !== null ? 'offline' : 'timeout';
   }
 
+  // One command over the receiver, in the vendor helper's order (send_msg):
+  // link check, wait until the previous write has finished, send, link check,
+  // wait for delivery. Single packets are occasionally lost over the radio; a
+  // lost one is sent once more, but only after the receiver reports the
+  // keyboard idle again (re-sending while it was still busy made it drop off).
   async sendDongle(data, expectReply) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt) await this.rxPoll(1000); // back off before a single retry
-      await this.ensureAwake();
+    for (let attempt = 0; ; attempt++) {
+      // wait_fb_write_finish starts with a 100 ms sleep, so the vendor never
+      // sends sooner than that after the previous exchange. Commands sent
+      // ~20 ms after a reply was fetched were seen to go unacknowledged.
+      await this.rxPoll(RX_POLL_MS);
+      let s = await this.ensureAwake();
+      if (!(await this.rxLinked())) throw new Error(NOT_LINKED);
+      for (let i = 0; !s.writeFinish && !s.readyRead && i < RX_MAX_POLLS; i++) {
+        await this.rxPoll(RX_POLL_MS);
+        s = await this.rxStatus();
+      }
+      if (!s.online) continue; // fell asleep while we waited: ensureAwake prompts for a key press
+      if (!s.writeFinish && !s.readyRead) throw new Error(STILL_BUSY);
       this.log('→', data);
       await this.t.sendFeature(data);
+      await this.rxLinked();
       const r = await this.waitDelivered(expectReply);
       if (r === 'ok') return;
+      if (attempt >= 1) throw r === 'offline' ? new KeyboardAsleepError() : new Error(NOT_CONFIRMED);
     }
-    throw new Error('The keyboard did not confirm the command over the 2.4 GHz receiver. If its green LED is blinking it lost the receiver: switch it off and on, or use the USB cable.');
   }
 
   // stream=true: fire-and-forget frames (music/screen), no link handshake.

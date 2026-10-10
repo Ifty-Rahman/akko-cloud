@@ -105,6 +105,12 @@ Keyboard replies are not returned directly.
 | `[FC]` | the keyboard's 64-byte reply to the last query | fetch reply |
 | `[FE, n]` | – | announce the length of the next streamed packet (music/screen) |
 
+* **Order per command** (the helper's `send_msg`): `[FD]` link check → wait
+  until `[FB]` shows the previous write finished → send → `[FD]` → poll `[FB]`
+  (`wait_fb_write_finish`: at most 15 polls, 100 ms apart). On a timeout the
+  helper reports an error; it never sends the command again. Re-sending to a
+  keyboard that had not confirmed the first copy was seen to make it drop off
+  the receiver (green LED blinking, power cycle needed).
 * **Writes**: send → poll `[FB]` until `d[3] = 1`. A write never sets `d[0]`.
 * **Queries**: send → poll until `d[0] = 1` → `[FC]` → read the reply.
 * `d[2] = 1` means the keyboard is asleep (its 2.4 GHz sleep timer) or out of

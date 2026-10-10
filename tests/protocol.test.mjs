@@ -595,3 +595,29 @@ test('2.4 GHz receiver on macOS: a stale reply to the link check is read again, 
   assert.equal(await kb.getDeviceId(), 594);
   assert.deepEqual(await kb.getLinkStatus(), { linked: true, battery: 66 });
 });
+
+// macOS race: a request arriving < 5 ms after a command overwrites it before the
+// receiver takes it, so the command is lost (no busy, no reply)
+class RacyReceiver extends FakeReceiver {
+  constructor() { super(); this.lastSet = 0; this.lastWasCommand = false; this.lost = 0; }
+  async sendFeature(d) {
+    const now = performance.now();
+    if (this.lastWasCommand && now - this.lastSet < 5) { this.lost++; this.reply = false; this.pending = 0; }
+    this.lastSet = now;
+    this.lastWasCommand = ![0xfb, 0xfc, 0xfd].includes(d[0]);
+    return super.sendFeature(d);
+  }
+}
+
+test('2.4 GHz receiver: requests are spaced like the vendor, so a command is not overwritten (macOS race)', async () => {
+  const rx = new RacyReceiver();
+  const kb = new Keyboard(rx, { dongle: true }); // real pacing
+  globalThis.setTimeout = realSetTimeout; // real timers: the gap must take real time
+  try {
+    assert.equal(await kb.getDeviceId(), 594);
+    assert.equal(await kb.getProfile(), 0);
+  } finally {
+    globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
+  }
+  assert.equal(rx.lost, 0, 'no command was overwritten');
+});

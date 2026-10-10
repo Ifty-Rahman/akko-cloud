@@ -50,6 +50,7 @@ export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
 const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before reading a reply
+const RX_SEND_GAP_MS = 10; // vendor send_feature: at least this long between requests
 const RX_REREAD_MS = 15; // gap before reading a stale receiver reply again
 const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
@@ -154,7 +155,20 @@ export class Keyboard {
   }
 
   async rawSend(bytes) {
-    const data = packet(bytes);
+    await this.send(packet(bytes));
+  }
+
+  // Every request over the receiver is at least RX_SEND_GAP_MS after the
+  // previous one, like the vendor helper's send_feature (10 ms before each
+  // send). The receiver holds one incoming request at a time: on macOS a link
+  // check sent 1 ms after a command overwrote the command before the receiver
+  // took it, and the command was silently lost (user's debug log).
+  async send(data) {
+    if (this.dongle) {
+      const wait = (this.lastSendAt ?? 0) + RX_SEND_GAP_MS * this.rxPace - Date.now();
+      if (wait > 0) await sleep(wait);
+      this.lastSendAt = Date.now();
+    }
     this.log('→', data);
     await this.t.sendFeature(data);
   }
@@ -332,8 +346,7 @@ export class Keyboard {
       if (r !== 'ok') throw new Error(STILL_BUSY);
     }
     this.lastPolls = 0;
-    this.log('→', data);
-    await this.t.sendFeature(data);
+    await this.send(data);
     await this.rxLinked();
     let r = await this.pollUntil((x) => x.writeFinish);
     if (r === 'ok' && expectReply) {
@@ -357,8 +370,7 @@ export class Keyboard {
     const data = applyChecksum(packet(bytes), checksum);
     await sleep(preDelay);
     if (this.dongle && !stream) return this.sendDongle(data, expectReply);
-    this.log('→', data);
-    await this.t.sendFeature(data);
+    await this.send(data);
   }
 
   async read(preDelay = 5) {

@@ -246,31 +246,27 @@ test('2.4 GHz receiver: vendor order — FD, send, FD, then status polls', async
   assert.equal(rx.log.at(-1), 0xfc);
 });
 
-test('2.4 GHz receiver: a lost command is not re-sent while the keyboard is busy', async () => {
-  const rx = new FakeReceiver({ stall: true }); // never becomes idle again
+test('2.4 GHz receiver: an unconfirmed command is never sent twice (like the vendor)', async () => {
+  const rx = new FakeReceiver({ stall: true }); // the keyboard never confirms
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  await assert.rejects(kb.setProfile(1), /still busy/);
+  await assert.rejects(kb.setProfile(1), /did not confirm/);
   assert.equal(rx.kbSends, 1);
-  assert.ok(rx.log.filter((c) => c === 0xfb).length <= 33, 'polls are bounded like the vendor (15 per wait)');
+  const polls = rx.log.filter((c) => c === 0xfb).length;
+  assert.ok(polls <= 30, `waiting is bounded (15 quick polls, then slower ones up to 5 s): ${polls} polls`);
 });
 
-test('2.4 GHz receiver: a lost command is sent once more after the keyboard is idle', async () => {
+test('2.4 GHz receiver: nothing is sent while the keyboard has not finished the previous exchange', async () => {
   const rx = new FakeReceiver();
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   const send = rx.sendFeature.bind(rx);
   let lost = false;
   rx.sendFeature = async (d) => {
-    if (d[0] === 0x05 && !lost) { // the radio loses the first copy
-      lost = true;
-      rx.log.push(d[0]);
-      rx.busyPolls = 16; // unconfirmed for longer than one 15-poll wait, then idle
-      return;
-    }
+    if (d[0] === 0x05 && !lost) { lost = true; rx.log.push(d[0]); rx.busyPolls = 100; return; } // radio lost it; keyboard stays busy
     return send(d);
   };
-  await kb.setProfile(1);
-  assert.equal(rx.log.filter((c) => c === 0x05).length, 2);
-  assert.equal(rx.kbSends, 1, 'the keyboard received exactly one copy');
+  await assert.rejects(kb.setProfile(1), /did not confirm/);
+  await assert.rejects(kb.getDeviceId(), /still busy/);
+  assert.equal(rx.log.filter((c) => c === 0x05 || c === 0x8f).length, 1, 'neither a re-send nor the next command went out');
 });
 
 test('2.4 GHz receiver: waits for a write still in flight before sending', async () => {
@@ -533,4 +529,16 @@ test('2.4 GHz receiver: a slow confirmation gives the keyboard a break before th
   rx.sendFeature = send;
   await kb.getDeviceId();
   assert.equal(kb.coolDown, 0, 'used up by the next command');
+});
+
+test('2.4 GHz receiver: a keyboard that goes quiet mid-command and comes back finishes the command (no re-send)', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const events = [];
+  kb.onAsleep = (v) => events.push(v);
+  const send = rx.sendFeature.bind(rx);
+  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f) rx.asleepPolls = 200; }; // offline for a while right after the query
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(rx.kbSends, 1, 'the query was sent once');
+  assert.deepEqual(events, [true, false], 'the "press any key" banner was shown while it was quiet');
 });

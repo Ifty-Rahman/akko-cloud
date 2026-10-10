@@ -1,0 +1,11 @@
+# Akko PC75B family — give the logged-in desktop user access to the keyboard's
+# /dev/hidraw* nodes so Chrome/Edge (WebHID) can send configuration reports.
+# Install on any Linux PC you browse from:
+#   sudo cp 70-akko-keyboard.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3151", ATTRS{idProduct}=="4003", TAG+="uaccess"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0461", ATTRS{idProduct}=="4003", TAG+="uaccess"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="2420", TAG+="uaccess"
+
+# In Mac mode some PC75B variants use Apple's id 05ac:024f, which is shared with
+# Apple's own aluminium keyboard. Uncomment only if you use Mac mode here.
+#KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="05ac", ATTRS{idProduct}=="024f", TAG+="uaccess"

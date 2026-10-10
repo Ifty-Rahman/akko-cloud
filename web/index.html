@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Akko Web Driver</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='8' width='28' height='16' rx='3' fill='%235b8cff'/%3E%3Crect x='6' y='12' width='4' height='3' rx='.6' fill='white'/%3E%3Crect x='12' y='12' width='4' height='3' rx='.6' fill='white'/%3E%3Crect x='18' y='12' width='4' height='3' rx='.6' fill='white'/%3E%3Crect x='9' y='18' width='14' height='3' rx='.6' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="3"/><rect class="k" x="6" y="12" width="4" height="3" rx=".6"/><rect class="k" x="12" y="12" width="4" height="3" rx=".6"/><rect class="k" x="18" y="12" width="4" height="3" rx=".6"/><rect class="k" x="9" y="18" width="14" height="3" rx=".6"/></svg>
+      <span>Akko Web Driver</span>
+    </div>
+    <div class="device-summary" id="deviceSummary" hidden>
+      <span class="dot"></span>
+      <span id="deviceName"></span>
+      <label class="profile-pick">Profile
+        <select id="profileSelect"></select>
+      </label>
+      <button class="ghost" id="disconnectBtn">Disconnect</button>
+    </div>
+    <button class="ghost icon" id="themeBtn" title="Toggle light / dark theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
+  </header>
+
+  <main>
+    <!-- Connection screen -->
+    <section id="connectView" class="connect">
+      <h1>Configure your Akko PC75B</h1>
+      <p class="lead">Lighting, key remapping, macros and keyboard settings — straight from the browser. No vendor app required.</p>
+      <div class="connect-grid">
+        <div class="card">
+          <h2>Keyboard on this device</h2>
+          <p>Plug the keyboard into the computer you are using now (USB cable recommended). Needs Chrome, Edge, Opera or another Chromium browser on desktop.</p>
+          <button class="primary" id="connectUsbBtn">Connect keyboard</button>
+          <p class="hint" id="webhidHint"></p>
+        </div>
+        <div class="card">
+          <h2>Keyboard on the mini PC</h2>
+          <p>Plug the keyboard into the mini PC hosting this page. Works from any browser — phone, tablet or laptop.</p>
+          <button id="refreshBridgeBtn">Find keyboards</button>
+          <ul class="bridge-list" id="bridgeList"></ul>
+          <p class="hint" id="bridgeHint"></p>
+        </div>
+        <div class="card subtle">
+          <h2>Just looking?</h2>
+          <p>Explore every screen with a simulated keyboard. Nothing is written to real hardware.</p>
+          <button id="demoBtn">Open demo</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main app -->
+    <section id="appView" hidden>
+      <div class="device-strip" id="deviceStrip"></div>
+      <nav class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-tab="keys" aria-selected="true">Keys</button>
+        <button role="tab" data-tab="lighting">Lighting</button>
+        <button role="tab" data-tab="macros">Macros</button>
+        <button role="tab" data-tab="settings">Settings</button>
+        <button role="tab" data-tab="backup">Backup</button>
+        <button role="tab" data-tab="log">Log</button>
+      </nav>
+
+      <div class="tab-panel" data-panel="keys">
+        <div class="toolbar">
+          <div class="seg" id="layerSeg"></div>
+          <span class="spacer"></span>
+          <span class="dirty" id="keysDirty" hidden>Unsaved changes</span>
+          <button class="ghost" id="keysReloadBtn">Reload</button>
+          <button class="ghost" id="keysDefaultsBtn">Reset layer</button>
+          <button class="primary" id="keysWriteBtn" disabled>Write to keyboard</button>
+        </div>
+        <div class="kb-wrap"><div class="kb" id="kbKeys"></div></div>
+        <div class="extras" id="extraSlots"></div>
+        <div class="card editor" id="keyEditor">
+          <p class="muted">Select a key above to remap it.</p>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="lighting" hidden>
+        <div class="light-grid">
+          <div class="card" id="mainLightCard"></div>
+          <div class="card" id="logoLightCard"></div>
+        </div>
+        <div class="card" id="hostEffectCard" hidden></div>
+        <div class="card">
+          <div class="card-head">
+            <h2>Custom per-key colours</h2>
+            <span class="spacer"></span>
+            <button class="ghost" id="picLoadBtn">Load from keyboard</button>
+            <button class="primary" id="picWriteBtn">Write &amp; activate</button>
+          </div>
+          <div class="paint-tools">
+            <label>Brush <input type="color" id="brushColor" value="#5b8cff"></label>
+            <button class="ghost" id="picFillBtn">Fill all</button>
+            <button class="ghost" id="picClearBtn">Clear</button>
+            <span class="muted">Click or drag across keys to paint.</span>
+          </div>
+          <div class="kb-wrap"><div class="kb paint" id="kbPaint"></div></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="macros" hidden>
+        <div class="macro-layout">
+          <div class="card macro-slots">
+            <h2>Macro slots</h2>
+            <p class="muted small">Slots are shared by all profiles. Assign a macro to a key on the Keys tab.</p>
+            <ul id="macroSlotList"></ul>
+          </div>
+          <div class="card" id="macroEditor"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="settings" hidden>
+        <div class="settings-grid" id="settingsGrid"></div>
+      </div>
+
+      <div class="tab-panel" data-panel="backup" hidden>
+        <div class="card">
+          <h2>Backup &amp; restore</h2>
+          <p>Save every profile (key maps, Fn layers, lighting, options) plus the macro slots in use to a file, and restore it later or on another PC75B.</p>
+          <div class="row">
+            <button class="primary" id="exportBtn">Export backup</button>
+            <label class="button">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>
+          </div>
+          <p class="muted" id="backupStatus"></p>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="log" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>HID traffic</h2>
+            <span class="spacer"></span>
+            <label class="switch"><input type="checkbox" id="logToggle"><span>Record packets</span></label>
+            <button class="ghost" id="logClearBtn">Clear</button>
+          </div>
+          <pre class="log" id="logOut"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="busy" id="busy" hidden><div class="spinner"></div><span id="busyText">Working…</span></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

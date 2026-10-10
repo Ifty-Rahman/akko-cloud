@@ -190,7 +190,7 @@ async function initialLoad() {
       renderDeviceStrip();
     } },
     { label: 'Key map', run: async () => { await loadKeys(); S.loaded.add('keys'); } },
-    { label: 'Macros used by your keys', run: async (sub) => {
+    { label: 'Macros', run: async (sub) => {
       const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => sub(`${i + 1} of ${n}`));
       if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
     } },
@@ -200,9 +200,7 @@ async function initialLoad() {
   const box = $('#loader');
   const list = $('#loaderSteps');
   const err = $('#loaderError');
-  $('#loaderHint').textContent = S.transport.dongle
-    ? 'About 10 seconds over the 2.4 GHz receiver. Please wait until it finishes.'
-    : 'Just a few seconds. Please wait until it finishes.';
+  $('#loaderHint').textContent = 'Please wait till it finishes.';
   list.replaceChildren(...steps.map((st) => (st.el = h('li', {}, h('span', { class: 'mark' }), h('span', {}, st.label), h('span', { class: 'sub' })))));
   const setState = (i, state, mark = '') => {
     steps[i].el.className = state;

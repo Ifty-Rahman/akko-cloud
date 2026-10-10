@@ -38,9 +38,9 @@ sudo cp linux/70-akko-keyboard.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-**2.4 GHz receiver:** changes take a little longer than over the cable. The keyboard sleeps after a
-couple of minutes without a key press, and only a key press wakes it. The site tells you when that
-happens.
+**2.4 GHz receiver:** changes take a little longer than over the cable. After a couple of minutes
+without a key press the keyboard's lights go off and it stops answering the receiver until you press
+a key. The site tells you when that happens.
 
 ## Features
 
@@ -48,11 +48,12 @@ happens.
   media/system action, a mouse action, a macro, or nothing. The knob's turn and press can be remapped
   too.
 - **Macros:** record key presses and mouse clicks, edit steps and delays, and play them as Loop,
-  Toggle or Press to play. They're kept in a library with folders, import and export. Macros already
-  on the keyboard are found automatically.
+  Toggle or Press to play. They're kept in a library with folders, import and export. Macros your
+  keys already use are found on the keyboard automatically.
 - **Lighting:** 24 backlight effects with colour, rainbow, brightness, speed and direction, the LED
   strip, custom per-key colours, and music or screen-colour sync.
-- **Settings:** polling rate, debounce, Windows-key lock, WASD/arrow swap, and wireless sleep timers.
+- **Settings:** polling rate, debounce, Windows-key lock, WASD/arrow swap, and wireless power saving
+  (lights-off and sleep timers).
 - **Backup:** save everything to a file and restore it later. Factory reset.
 - **Shortcuts:** a searchable list of the keyboard's own Fn shortcuts.
 

@@ -320,7 +320,8 @@ button.rec-on .rec-dot { border-radius: 2px; animation: recBlink 1s steps(2, sta
 .sleep-group + .sleep-group { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
 .sleep-group h3 { font-size: 0.92rem; margin: 0 0 8px; }
 .sleep-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px 12px; padding: 6px 0; }
-.sleep-row .name { color: var(--text); }
+.sleep-row .name { color: var(--text); display: flex; flex-direction: column; }
+.sleep-row .name .hint { color: var(--muted); font-size: 0.8rem; }
 .sleep-row .num { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .sleep-row .num input { width: 60px; text-align: center; padding: 7px 4px; }
 .sleep-row .num input:disabled { opacity: 0.45; }

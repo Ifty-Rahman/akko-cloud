@@ -140,16 +140,17 @@ async function connect(transport) {
     }
     const kb = new Keyboard(transport, { dongle: transport.dongle, log: logPacket });
     let busyLabel;
-    // Over the receiver the keyboard sleeps after its 2.4 GHz sleep time without
-    // a key press (2 min by default) and only a key press wakes it. Say so for
-    // as long as it lasts, also when no busy overlay is showing.
+    // Over the receiver the keyboard stops answering once its "lights off"
+    // timer runs out (2 min without a key press by default; seen as offline at
+    // 115.8 s with a 120 s timer), and only a key press brings it back. Say so
+    // for as long as it lasts, also when no busy overlay is showing.
     kb.onAsleep = (asleep) => {
       const el = $('#busyText');
       const banner = $('#asleepBanner');
       if (asleep) {
         busyLabel = el.textContent;
         const mins = S.sleepRf ? Math.round(S.sleepRf / 60) : 0;
-        const msg = `Your keyboard is asleep${mins ? ` (it sleeps after ${mins} min without a key press)` : ' (it sleeps after a few minutes without a key press)'}. Press any key on it to continue.`;
+        const msg = `Your keyboard isn’t answering. After ${mins ? `${mins} min` : 'a few minutes'} without a key press its lights go off and it stops listening to the receiver. Press any key on it to continue.`;
         el.textContent = msg;
         banner.replaceChildren(h('b', {}, 'Waiting for the keyboard. '), msg, h('span', { class: 'hint' }, ' If its green LED keeps blinking instead, switch it off and on.'));
         banner.hidden = false;
@@ -1044,32 +1045,36 @@ async function loadSettings() {
     h('label', { class: 'field' }, h('span', {}, 'Debounce: ', debVal, h('span', { class: 'muted' }, ' (1 = fastest, 10 = most stable)')),
       h('div', { class: 'inline-apply' }, debIn, h('button', { onclick: () => busy('Setting debounce…', async () => { await S.kb.setDebounce(Number(debIn.value)); toast('Debounce saved'); }) }, 'Apply')))));
 
-  const sleepRow = (label, secs, min, max) => {
+  const sleepRow = (label, hint, secs, min, max) => {
     const never = h('input', { type: 'checkbox', checked: secs === 0 });
     const val = h('input', { type: 'number', min, max, value: secs === 0 ? max : Math.round(secs / 60), disabled: secs === 0, 'aria-label': `${label} (minutes)` });
     never.addEventListener('change', () => (val.disabled = never.checked));
     return {
-      el: h('div', { class: 'sleep-row' }, h('span', { class: 'name' }, label), h('span', { class: 'num' }, val, 'min'),
+      el: h('div', { class: 'sleep-row' }, h('span', { class: 'name' }, label, h('span', { class: 'hint' }, hint)), h('span', { class: 'num' }, val, 'min'),
         h('label', { class: 'switch' }, never, h('span', {}, 'Never'))),
       get: () => (never.checked ? 0 : Math.max(min, Math.min(max, Number(val.value) || min)) * 60),
     };
   };
+  // Same two timers as the vendor app: "Light off" (sleepTime.time_24) and
+  // "Sleep" (sleepTime.deepTime_24), and the Bluetooth pair.
+  const LIGHTS = 'Only the lights go out';
+  const SLEEP = 'The keyboard goes to sleep';
   const rows = {
-    rf: sleepRow('Sleep after', sl.rf, m.sleep.min, m.sleep.max),
-    deepRf: sleepRow('Deep sleep after', sl.deepRf, m.sleep.minDeep, m.sleep.maxDeep),
-    bt: sleepRow('Sleep after', sl.bt, m.sleep.min, m.sleep.max),
-    deepBt: sleepRow('Deep sleep after', sl.deepBt, m.sleep.minDeep, m.sleep.maxDeep),
+    rf: sleepRow('Lights off after', LIGHTS, sl.rf, m.sleep.min, m.sleep.max),
+    deepRf: sleepRow('Sleep after', SLEEP, sl.deepRf, m.sleep.minDeep, m.sleep.maxDeep),
+    bt: sleepRow('Lights off after', LIGHTS, sl.bt, m.sleep.min, m.sleep.max),
+    deepBt: sleepRow('Sleep after', SLEEP, sl.deepBt, m.sleep.minDeep, m.sleep.maxDeep),
   };
-  const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless sleep'),
-    h('p', { class: 'muted small' }, 'How long the keyboard waits without a key press before saving power. Any key wakes it.'),
+  const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless power saving'),
+    h('p', { class: 'muted small' }, 'Both timers count from your last key press, and any key brings the keyboard back. Over the 2.4 GHz receiver the keyboard also stops answering this app once its lights are off, until you press a key.'),
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
     h('div', { class: 'sleep-group' }, h('h3', {}, 'Bluetooth'), rows.bt.el, rows.deepBt.el),
     h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Saving sleep timers…', async () => {
       const next = Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.get()]));
       await S.kb.setSleepTime(next);
       S.sleepRf = next.rf;
-      toast('Sleep timers saved');
-    }) }, 'Apply sleep timers')));
+      toast('Power saving saved');
+    }) }, 'Apply')));
 
   // Only the switches the PC75B manual documents (Fn + Win, Fn + W). Every
   // other option bit is preserved unchanged on write: the original driver does

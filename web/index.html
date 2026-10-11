@@ -51,7 +51,7 @@
           </ol>
           <div class="wired-note" role="note">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0zM12 16.5V21"/></svg>
-            <p><b>Use the USB cable if you can.</b> The wireless connection can drop now and then while settings are being read or written. On the receiver, press any key first so the keyboard is awake.</p>
+            <p><b>Use the USB cable if you can.</b> The wireless connection can drop now and then while settings are being read or written. On the receiver, you’ll be asked to press a key so the keyboard is awake.</p>
           </div>
           <div class="connect-actions">
             <button class="primary big" id="connectUsbBtn">Connect keyboard</button>
@@ -204,6 +204,7 @@
       <div class="busy-head"><span id="busyText">Working</span><span class="busy-pct" id="busyPct"></span></div>
       <div class="busy-track"><i id="busyBar"></i></div>
       <div class="wave-kb small" data-rows="3" data-cols="10" aria-hidden="true"></div>
+      <p class="busy-hint" id="busyHint" hidden></p>
     </div>
   </div>
   <div class="asleep-banner" id="asleepBanner" role="alert" hidden></div>

@@ -562,10 +562,13 @@ button.big { min-height: 46px; padding: 11px 24px; font-size: 1rem; }
 
 /* Busy overlay, connecting: the wave instead of a progress bar */
 .busy-card .wave-kb { display: none; }
-.busy.wave .busy-card { display: flex; flex-direction: column; align-items: center; gap: 16px; width: min(300px, calc(100vw - 32px)); padding: 24px 24px 20px; }
+.busy.wave .busy-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(360px, calc(100vw - 32px)); padding: 24px 24px 20px; }
 .busy.wave .wave-kb { display: grid; order: -1; width: 210px; gap: 5px; }
 .busy.wave .busy-track, .busy.wave .busy-pct { display: none; }
 .busy.wave .busy-head { margin: 0; justify-content: center; }
 .busy.wave #busyText::after { content: ''; display: inline-block; width: 1.1em; text-align: left; animation: dots 1.4s steps(1) infinite; }
 @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
 .busy.wave #busyText::before { content: ''; display: inline-block; width: 1.1em; }
+.busy-hint { margin: 0; color: var(--muted); font-size: 0.85rem; text-align: center; }
+.busy.wave .busy-head { text-align: center; }
+.busy.wave #busyText { white-space: nowrap; }

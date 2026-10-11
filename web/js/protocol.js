@@ -252,10 +252,13 @@ export class Keyboard {
   }
 
   // ---- query fetching as in PR #3 ("fix/receiver-link-stability") ---------
-  // send -> poll [FB] (first after 50 ms, then every 100 ms, up to 3 s) until
+  // send -> poll [FB] (first after 50 ms, then every 100 ms) until
   // is_write_finish (writes) or is_ready_read (queries) -> fetch with [FC].
   // A command the keyboard did not confirm is sent once more after 1 s.
-  async waitDelivered(expectReply, timeoutMs = 3000) {
+  // Connection first: a keyboard that has not answered within 0.6 s is polled
+  // less often (see rxWaitPoll), and given 5 s instead of 3 s: late replies
+  // were seen arriving 3-4 s after the command.
+  async waitDelivered(expectReply, timeoutMs = 5000) {
     const t0 = Date.now();
     let sawPending = false;
     let offlineSince = null;
@@ -272,9 +275,18 @@ export class Keyboard {
         else if (sawPending || Date.now() - t0 > 150 * this.rxPace) return 'ok';
       }
       if (Date.now() - t0 > SLOW_COMMAND_MS * this.rxPace) this.setSlow(true);
-      await this.rxPoll(RX_POLL_MS);
+      await this.rxWaitPoll(t0);
     }
     return 'timeout';
+  }
+
+  // Every drop in the logs came while the app was polling [FB] for a keyboard
+  // that had not answered yet (26+ polls in 3 s), and polling at 25 ms was
+  // seen to make the link drop. So a quick answer is polled at the vendor's
+  // 100 ms, a slow one at 250 ms after 0.6 s and 400 ms after 1.5 s.
+  rxWaitPoll(t0) {
+    const waited = (Date.now() - t0) / this.rxPace;
+    return this.rxPoll(waited < 600 ? RX_POLL_MS : waited < 1500 ? 250 : 400);
   }
 
   // ---- connection first, speed second -------------------------------------
@@ -316,7 +328,7 @@ export class Keyboard {
         continue;
       }
       if (s.online && (s.writeFinish || s.readyRead)) return s;
-      await this.rxPoll(RX_POLL_MS);
+      await this.rxWaitPoll(t0);
     }
     return null;
   }

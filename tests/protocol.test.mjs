@@ -545,6 +545,26 @@ test('2.4 GHz receiver: a lost query is sent once more after 1 s, once the keybo
   assert.equal(rx.log.filter((c) => c === 0x8f).length, 2, 'sent twice');
 });
 
+test('2.4 GHz receiver: a keyboard that drops off mid-command is waited for, then asked again', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const notes = [];
+  kb.onNote = (n) => notes.push(n);
+  const send = rx.sendFeature.bind(rx);
+  let dropped = false;
+  rx.sendFeature = async (d) => {
+    if (d[0] === 0x8f && !dropped) { // lost, and the link goes down for a while (seen: 2.4 s, and > 3 s)
+      dropped = true; rx.log.push(d[0]); rx.kbSends++; rx.reply = false; rx.pending = 1000; rx.asleepPolls = 0;
+      setTimeout(() => { rx.pending = 0; rx.asleepPolls = 120; }, 0);
+      return;
+    }
+    return send(d);
+  };
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(rx.log.filter((c) => c === 0x8f).length, 2, 'sent again once the keyboard was back');
+  assert.ok(notes.some((n) => /dropped off/.test(n)), notes.join(' | '));
+});
+
 test('2.4 GHz receiver: nothing is sent again while the keyboard stays busy', async () => {
   const rx = new FakeReceiver({ stall: true }); // busy forever after the first command
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });

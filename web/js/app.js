@@ -362,10 +362,10 @@ const layerIndex = () => (S.layer === 'base' ? S.profile : Number(S.layer.slice(
 // load over the 2.4 GHz receiver. ("-v2": copies saved by earlier versions
 // could contain misread pages, so they are dropped once.)
 const MAP_CACHE = 'akko-map-v2';
-const cacheKey = () => `${MAP_CACHE}:${S.id & 0x7fffffff}:${S.layer}:${layerIndex()}`;
-function savedMatrix() {
+const cacheKey = (layer = S.layer, idx = layerIndex()) => `${MAP_CACHE}:${S.id & 0x7fffffff}:${layer}:${idx}`;
+function savedMatrix(layer, idx) {
   try {
-    const v = localStorage.getItem(cacheKey());
+    const v = localStorage.getItem(cacheKey(layer, idx));
     if (v && v.length === 1024) return Uint8Array.from(v.match(/../g), (x) => parseInt(x, 16));
   } catch { /* storage unavailable */ }
   return undefined;
@@ -1174,17 +1174,22 @@ async function loadSettings() {
 // ================================================================== BACKUP
 $('#exportBtn').addEventListener('click', () => busy('Exporting backup', async (p) => {
   const kb = S.kb;
-  p.steps = (S.model.profiles + S.model.fnLayers) * 8 + 14;
+  // A page that matches the saved copy is read once, any other page twice.
+  const saved = [
+    ...Array.from({ length: S.model.profiles }, (_, i) => savedMatrix('base', i)),
+    ...Array.from({ length: S.model.fnLayers }, (_, i) => savedMatrix(`fn${i}`, i)),
+  ];
+  p.steps = saved.reduce((n, m) => n + (m ? 8 : 16), 0) + 14;
   const data = { format: 'akko-web-driver/1', model: S.model.name, id: S.id, created: new Date().toISOString(), profiles: [], fn: [], macros: {} };
   const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
   const macroIdx = new Set();
   for (let p = 0; p < S.model.profiles; p++) {
-    const m = await kb.getKeyMatrix(p);
+    const m = await kb.getKeyMatrix(p, saved[p]);
     for (let i = 0; i < 128; i++) if (m[i * 4] === 9) macroIdx.add(m[i * 4 + 2]);
     data.profiles.push({ matrix: hex(m) });
   }
   for (let f = 0; f < S.model.fnLayers; f++) {
-    const m = await kb.getFnMatrix(f);
+    const m = await kb.getFnMatrix(f, saved[S.model.profiles + f]);
     for (let i = 0; i < 128; i++) if (m[i * 4] === 9) macroIdx.add(m[i * 4 + 2]);
     data.fn.push(hex(m));
   }

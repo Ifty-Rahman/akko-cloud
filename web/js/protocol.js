@@ -57,6 +57,7 @@ const QUIET_MS = 150; // quiet time after every exchange before the next command
 const BURST = 8; // after this many commands in a row ...
 const BURST_REST_MS = 800; // ... rest this long
 const IDLE_RESET_MS = 2000; // a pause this long counts as rest
+const SEND_ATTEMPTS = 3; // a command lost to a drop is sent again once the keyboard is back
 const SLOW_REPLY_MS = 1000; // a reply slower than this (normal ~0.4 s) ...
 const SLOW_REST_MAX_MS = 3000; // ... is followed by a rest as long, up to this // a quick reply takes ~0.4 s; longer means the keyboard is in its slow state
 // macOS (see send / rxRequest / read): the receiver needs these small gaps
@@ -297,11 +298,22 @@ export class Keyboard {
 
   // Before sending a command again, wait until the receiver reports the
   // keyboard idle (write finished): re-sending into a busy keyboard was seen
-  // before drops. Returns false if it never becomes idle.
+  // before drops. A keyboard that dropped off the receiver usually comes back
+  // by itself within a few seconds (seen: 2.4 s during a backup export), so it
+  // is waited for (ensureAwake asks for a key press if that takes longer)
+  // instead of failing. Returns false if it stays online but busy.
   async waitIdle(timeoutMs = 3000) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeoutMs * this.rxPace) {
+    let t0 = Date.now();
+    for (let drops = 0; Date.now() - t0 < timeoutMs * this.rxPace;) {
       const s = await this.rxStatus();
+      if (!s.online && drops < 5) {
+        if (!drops++) this.onNote?.('keyboard dropped off the receiver: waiting for it to come back');
+        await this.ensureAwake();
+        this.onNote?.('keyboard back on the receiver');
+        await this.rxPoll(1000); // let the link settle before asking anything
+        t0 = Date.now();
+        continue;
+      }
       if (s.online && (s.writeFinish || s.readyRead)) return true;
       await this.rxPoll(RX_POLL_MS);
     }
@@ -310,9 +322,9 @@ export class Keyboard {
 
   async sendDongle(data, expectReply) {
     await this.pace();
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < SEND_ATTEMPTS; attempt++) {
       if (attempt) {
-        await this.rxPoll(1000); // back off before a single retry
+        await this.rxPoll(1000); // back off before sending again
         if (!(await this.waitIdle())) {
           this.onNote?.('not sent again: the keyboard stayed busy');
           break;

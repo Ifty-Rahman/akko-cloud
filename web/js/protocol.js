@@ -57,6 +57,7 @@ const QUIET_MS = 150; // quiet time after every exchange before the next command
 const BURST = 8; // after this many commands in a row ...
 const BURST_REST_MS = 800; // ... rest this long
 const IDLE_RESET_MS = 2000; // a pause this long counts as rest
+const KEEP_ALIVE_MS = 30000; // lights-off can be as short as 1 min
 const SEND_ATTEMPTS = 3; // a command lost to a drop is sent again once the keyboard is back
 const SLOW_REPLY_MS = 1000; // a reply slower than this (normal ~0.4 s) ...
 const SLOW_REST_MAX_MS = 3000; // ... is followed by a rest as long, up to this // a quick reply takes ~0.4 s; longer means the keyboard is in its slow state
@@ -142,9 +143,24 @@ export class Keyboard {
 
   // Serialise all device traffic.
   exclusive(fn) {
-    const run = this.queue.then(fn, fn);
+    this.inFlight = (this.inFlight ?? 0) + 1;
+    const run = this.queue.then(fn, fn).finally(() => { this.inFlight--; });
     this.queue = run.catch(() => {});
     return run;
+  }
+
+  // One light query (the current profile) once nothing has run for a while.
+  // Measured on a PC75B Plus+ on battery, lights-off set to 1 min: with a query
+  // every 40 s it stayed on the receiver for 3 min; without, the link went down
+  // within a minute (lights-off cuts it until a key press). Side effect: the
+  // lights stay on as well. A keyboard that is already asleep is left alone.
+  async keepAlive(idleMs = KEEP_ALIVE_MS) {
+    if (!this.dongle || this.inFlight || Date.now() - (this.lastDoneAt ?? 0) < idleMs * this.rxPace) return false;
+    const s = await this.exclusive(() => this.rxStatus());
+    if (!s.online || this.inFlight) return false;
+    this.onNote?.('keep-alive');
+    await this.getProfile();
+    return true;
   }
 
   async rawSend(bytes) {
@@ -215,10 +231,10 @@ export class Keyboard {
   }
 
   // A sleeping keyboard cannot be woken by the receiver; only a key press does.
-  async ensureAwake(timeoutMs = 60000) {
+  async ensureAwake(timeoutMs = 60000, graceMs = OFFLINE_GRACE_MS) {
     const t0 = Date.now();
     let s = await this.rxStatus();
-    while (!s.online && Date.now() - t0 < OFFLINE_GRACE_MS * this.rxPace) {
+    while (!s.online && Date.now() - t0 < graceMs * this.rxPace) {
       await this.rxPoll(RX_POLL_MS);
       s = await this.rxStatus();
     }
@@ -321,7 +337,7 @@ export class Keyboard {
       const s = await this.rxStatus();
       if (!s.online && drops < 5) {
         if (!drops++) this.onNote?.('keyboard dropped off the receiver: waiting for it to come back');
-        await this.ensureAwake();
+        await this.ensureAwake(60000, 0); // known to be off: ask for a key press right away
         this.onNote?.('keyboard back on the receiver');
         await this.rxPoll(1000); // let the link settle before asking anything
         t0 = Date.now();

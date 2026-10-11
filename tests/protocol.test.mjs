@@ -584,6 +584,21 @@ test('2.4 GHz receiver: a reply delivered when the keyboard comes back is fetche
   assert.equal(rx.log.filter((c) => c === 0x8f).length, 1, 'asked only once');
 });
 
+test('2.4 GHz receiver: keep-alive asks one small query once idle, and leaves a sleeping keyboard alone', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getProfile();
+  assert.equal(await kb.keepAlive(30000), false, 'not while recently active');
+  kb.lastDoneAt = Date.now() - 31000 * 0.05;
+  const before = rx.kbSends;
+  assert.equal(await kb.keepAlive(30000), true);
+  assert.equal(rx.kbSends, before + 1);
+  kb.lastDoneAt = 0;
+  rx.asleepPolls = 1;
+  assert.equal(await kb.keepAlive(30000), false, 'asleep: no command');
+  assert.equal(rx.kbSends, before + 1);
+});
+
 test('2.4 GHz receiver: nothing is sent again while the keyboard stays busy', async () => {
   const rx = new FakeReceiver({ stall: true }); // busy forever after the first command
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });

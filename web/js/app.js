@@ -229,6 +229,22 @@ async function connect(transport) {
   }
   if (S.transport?.dongle) await kb.getLinkStatus().catch(() => undefined);
   if (S.kb === kb) renderDeviceStrip();
+  startKeepAlive(kb);
+}
+
+// Over the receiver, keep the keyboard from dropping off while the app is
+// open (Settings → Wireless power saving). See Keyboard.keepAlive.
+const KEEP_ALIVE = 'akko-keep-alive';
+function keepAliveOn() {
+  try { return localStorage.getItem(KEEP_ALIVE) !== '0'; } catch { return true; }
+}
+function startKeepAlive(kb) {
+  clearInterval(S.keepAliveTimer);
+  if (!S.transport?.dongle) return;
+  S.keepAliveTimer = setInterval(() => {
+    if (S.kb !== kb) return clearInterval(S.keepAliveTimer);
+    if (keepAliveOn() && $('#busy').hidden) kb.keepAlive().catch((e) => logNote(`keep-alive failed: ${e?.message || e}`));
+  }, 5000);
 }
 
 // Name from the model id the keyboard reports (Akko's own id → name table),
@@ -253,6 +269,7 @@ function renderDeviceStrip() {
 
 async function disconnect() {
   $('#connectLogRow').hidden = !S.logLines.length;
+  clearInterval(S.keepAliveTimer);
   S.music?.stop();
   S.screen?.stop();
   try { await S.transport?.close(); } catch { /* ignore */ }
@@ -1129,6 +1146,12 @@ async function loadSettings() {
   const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless power saving'),
     h('p', { class: 'muted small' }, 'Both timers count from your last key press, and any key brings the keyboard back. On battery, once the lights go off the keyboard also stops answering this app over the 2.4 GHz receiver until you press a key. While it charges, the lights stay on.'),
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
+    S.transport?.dongle ? h('label', { class: 'switch keep-alive' },
+      h('span', {}, 'Keep connected while this app is open',
+        h('span', { class: 'desc' }, 'A small query every 30 s stops it dropping off the receiver. The lights stay on meanwhile.')),
+      h('input', { type: 'checkbox', checked: keepAliveOn(), onchange: (e) => {
+        try { localStorage.setItem(KEEP_ALIVE, e.target.checked ? '1' : '0'); } catch { /* ignore */ }
+      } })) : null,
     h('div', { class: 'sleep-group' }, h('h3', {}, 'Bluetooth'), rows.bt.el, rows.deepBt.el),
     h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Setting power saving', async () => {
       const next = Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.get()]));

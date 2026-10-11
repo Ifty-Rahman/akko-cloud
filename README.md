@@ -1,8 +1,6 @@
 # Akko Cloud
 
-**Akko Cloud** is a website that configures **Akko PC75B Plus / PC75B Plus+** keyboards. You don't
-install the official Akko Cloud Driver: open the site, connect the keyboard and change its keys,
-lighting, macros and settings.
+**Akko Cloud** is a web based driver **Akko PC75B / PC75B Plus+** keyboards. The official driver will be unsupported on MacOS in the next major os update, thus I reverse engineered the drivers using [rea](https://rea.tools/) and built using Claude code.
 
 **Open it:** https://akko-cloud.pages.dev
 
@@ -38,9 +36,7 @@ sudo cp linux/70-akko-keyboard.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-**2.4 GHz receiver:** changes take a little longer than over the cable. On battery, once the
-keyboard's lights go off (after 2 minutes without a key press by default) it also stops answering the
-receiver until you press a key. The site tells you when that happens.
+**2.4 GHz receiver:** changes take a little longer than over the cable. The connection can also drop due to interferences and queries taking too long to transfer. The site tells you when that happens. 
 
 ## Features
 
@@ -58,7 +54,7 @@ receiver until you press a key. The site tells you when that happens.
 - **Debug:** an optional packet log, and a feedback form that emails the developer (with the log
   attached if you choose).
 
-Not supported: firmware updates, Bluetooth configuration, and Akko's online community features.
+Not supported as of now: firmware updates (Don't think it will get any), Bluetooth configuration, and Akko's online community features.
 
 ## Tech stack
 

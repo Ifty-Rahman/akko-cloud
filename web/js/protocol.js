@@ -61,6 +61,8 @@ const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before readi
 const RX_SEND_GAP_MS = 10; // vendor send_feature: at least this long between requests
 const RX_REREAD_MS = 15; // gap before reading a stale receiver reply again
 
+// commands whose reply starts with the command byte (seen on a PC75B Plus+)
+const ECHOES = new Set([0x84, 0x85, 0x86, 0x87, 0x88, 0x8f, 0x91, 0x92]);
 const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz mode (or use the USB cable).';
 const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
 const NOT_ANSWERED = 'The keyboard did not answer over the 2.4 GHz receiver. Press any key on it and try again, or use the USB cable.';
@@ -287,15 +289,29 @@ export class Keyboard {
       offlineSince = null;
       if (ready(s)) {
         if (i < RX_MAX_POLLS) this.setSlow(false);
-        return true;
+        return s;
       }
     }
-    return false;
+    return null;
+  }
+
+  // A reply the receiver still holds from an exchange that was cut off (seen
+  // after a failed connect: the keyboard-ID reply, unfetched). Left there, the
+  // next query takes it as its own answer, and every answer after that is the
+  // previous command's (the profile came back as 82 and the keyboard hung).
+  // Fetching it ([FC]) only involves the receiver.
+  async rxDrain() {
+    await this.rawSend([RX.FETCH]);
+    await this.rxPoll(30);
+    const old = await this.rawRecv();
+    this.onNote?.(`cleared a leftover reply (${old[0].toString(16).padStart(2, '0')}…) from the receiver`);
   }
 
   async sendDongle(data, expectReply) {
     if (!(await this.rxLinked())) throw new Error(NOT_LINKED);
-    if (!(await this.waitFb((s) => s.writeFinish))) throw new Error(STILL_BUSY);
+    const idle = await this.waitFb((s) => s.writeFinish);
+    if (!idle) throw new Error(STILL_BUSY);
+    if (idle.readyRead) await this.rxDrain();
     await this.send(data);
     await this.rxLinked();
     let ok = await this.waitFb((s) => s.writeFinish);
@@ -320,6 +336,7 @@ export class Keyboard {
       const linked = await this.rxLinked();
       await this.rawSend([RX.NEXT_LEN, REPORT_LEN]);
       await this.rxPoll(10);
+      if ((await this.rxStatus()).readyRead) await this.rxDrain();
       return linked;
     });
   }
@@ -371,7 +388,17 @@ export class Keyboard {
 
   async query(bytes, checksum = Checksum.BIT7) {
     await this.write(bytes, checksum, 10, false, true);
-    return this.read();
+    let r = await this.read();
+    // Over the receiver, a reply to a single command starts with that command
+    // (paged reads don't). One that doesn't belongs to an earlier exchange:
+    // wait for the right one rather than use it.
+    for (let n = 0; this.dongle && ECHOES.has(bytes[0]) && r[0] !== bytes[0]; n++) {
+      if (n >= 2) throw new Error(NOT_ANSWERED);
+      this.onNote?.(`reply ${r[0].toString(16).padStart(2, '0')} is not for ${bytes[0].toString(16)}: waiting for the right one`);
+      if (!(await this.waitFb((s) => s.readyRead))) throw new Error(NOT_ANSWERED);
+      r = await this.read();
+    }
+    return r;
   }
 
   // ---------------------------------------------------------- identity

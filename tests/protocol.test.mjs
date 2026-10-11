@@ -493,9 +493,36 @@ test('2.4 GHz receiver: connecting sends [FD] and [FE 40] first, like the helper
   const rx = new FakeReceiver();
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   assert.equal(await kb.rxInit(), true);
-  assert.deepEqual(rx.log, [0xfd, 0xfe]);
+  assert.deepEqual(rx.log, [0xfd, 0xfe, 0xfb]); // then a status check for a leftover reply
   assert.equal(rx.nextLen, 64);
   assert.equal(rx.kbSends, 0, 'nothing reaches the keyboard');
+});
+
+test('2.4 GHz receiver: a reply left over from a cut-off exchange is cleared, not taken as the next answer', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await rx.kb.sendFeature(Uint8Array.from([0x8f, 0, 0, 0, 0, 0, 0, 0x70])); // keyboard-ID reply from a failed connect ...
+  rx.reply = true; // ... still waiting in the receiver
+  const notes = [];
+  kb.onNote = (n) => notes.push(n);
+  await kb.rxInit();
+  assert.ok(notes.some((n) => /leftover reply \(8f/.test(n)), notes.join(' | '));
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(await kb.getProfile(), 0, 'not 0x52 from the old ID reply');
+});
+
+test('2.4 GHz receiver: a reply that belongs to another command is not used', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getDeviceId();
+  const stale = Uint8Array.from(rx.out); // the ID reply
+  const send = rx.sendFeature.bind(rx);
+  let once = true;
+  rx.sendFeature = async (d) => {
+    await send(d);
+    if (d[0] === 0xfc && once && rx.log.includes(0x85)) { once = false; rx.out = stale; rx.reply = true; rx.pending = 1; } // wrong reply, right one comes after
+  };
+  assert.equal(await kb.getProfile(), 0);
 });
 
 test('2.4 GHz receiver: the 5 s background check only talks to the receiver, and waits while busy', async () => {

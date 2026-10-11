@@ -241,6 +241,7 @@ async function connect(transport) {
         banner.hidden = true;
       }
     };
+    if (transport.dongle) await kb.rxInit(); // [FD], [FE 40] like the official driver
     const id = await kb.getDeviceId();
     const profile = await kb.getProfile().catch(() => 0);
     Object.assign(S, {
@@ -272,18 +273,27 @@ async function connect(transport) {
   startKeepAlive(kb);
 }
 
-// Over the receiver, keep the keyboard from dropping off while the app is
-// open (Settings → Wireless power saving). See Keyboard.keepAlive.
-const KEEP_ALIVE = 'akko-keep-alive';
+// Over the receiver, like the official driver: a receiver status check every
+// 5 s while idle (Keyboard.rxBackgroundStatus). Optionally (Settings → Wireless
+// power saving, off by default) also a small keyboard query every 30 s, which
+// keeps it on the receiver past its lights-off timer (Keyboard.keepAlive).
+const KEEP_ALIVE = 'akko-keep-alive-v2';
 function keepAliveOn() {
-  try { return localStorage.getItem(KEEP_ALIVE) !== '0'; } catch { return true; }
+  try { return localStorage.getItem(KEEP_ALIVE) === '1'; } catch { return false; }
 }
 function startKeepAlive(kb) {
   clearInterval(S.keepAliveTimer);
   if (!S.transport?.dongle) return;
-  S.keepAliveTimer = setInterval(() => {
+  S.keepAliveTimer = setInterval(async () => {
     if (S.kb !== kb) return clearInterval(S.keepAliveTimer);
-    if (keepAliveOn() && $('#busy').hidden) kb.keepAlive().catch((e) => logNote(`keep-alive failed: ${e?.message || e}`));
+    if (!$('#busy').hidden) return;
+    try {
+      if (keepAliveOn() && (await kb.keepAlive())) return;
+      const st = await kb.rxBackgroundStatus();
+      if (st && st.online && S.kb === kb) renderDeviceStrip(); // battery
+    } catch (e) {
+      logNote(`background check failed: ${e?.message || e}`);
+    }
   }, 5000);
 }
 
@@ -1187,8 +1197,8 @@ async function loadSettings() {
     h('p', { class: 'muted small' }, 'Both timers count from your last key press, and any key brings the keyboard back. On battery, once the lights go off the keyboard also stops answering this app over the 2.4 GHz receiver until you press a key. While it charges, the lights stay on.'),
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
     S.transport?.dongle ? h('label', { class: 'switch keep-alive' },
-      h('span', {}, 'Keep connected while this app is open',
-        h('span', { class: 'desc' }, 'A small query every 30 s stops it dropping off the receiver. The lights stay on meanwhile.')),
+      h('span', {}, 'Keep the keyboard awake while this app is open',
+        h('span', { class: 'desc' }, 'A small query every 30 s stops it dropping off the receiver when its lights go off. The lights stay on meanwhile.')),
       h('input', { type: 'checkbox', checked: keepAliveOn(), onchange: (e) => {
         try { localStorage.setItem(KEEP_ALIVE, e.target.checked ? '1' : '0'); } catch { /* ignore */ }
       } })) : null,

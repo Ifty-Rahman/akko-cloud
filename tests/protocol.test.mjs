@@ -216,6 +216,7 @@ class FakeReceiver {
     }
     if (d[0] === 0xfc) { this.out = await this.kb.receiveFeature(); return; }
     if (d[0] === 0xfd) { this.out = Uint8Array.from([0xaa, 0x55, 1]); return; }
+    if (d[0] === 0xfe) { this.nextLen = d[1]; return; } // receiver-only: length of the next packet
     this.kbSends++;
     this.pending = 2;
     this.reply = d[0] >= 0x80;
@@ -234,47 +235,6 @@ test('2.4 GHz receiver: queries wait for is_ready_read and fetch with 0xFC', asy
   const m = await kb.getKeyMatrix(0, Uint8Array.from(rx.kb.matrices[0])); // last known map
   assert.deepEqual(Array.from(m.slice(0, 4)), [0, 0, 41, 0]);
   assert.equal(rx.kbSends, 9);
-});
-
-test('2.4 GHz receiver: vendor order — FD, send, FD, then status polls', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  await kb.getDeviceId();
-  const cmd = rx.log.indexOf(0x8f);
-  assert.equal(rx.log[cmd - 1], 0xfd);
-  assert.equal(rx.log[cmd + 1], 0xfd);
-  assert.equal(rx.log.at(-1), 0xfc);
-});
-
-test('2.4 GHz receiver: an unconfirmed command is never sent twice (like the vendor)', async () => {
-  const rx = new FakeReceiver({ stall: true }); // the keyboard never confirms
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  await assert.rejects(kb.setProfile(1), /did not confirm/);
-  assert.equal(rx.kbSends, 1);
-  const polls = rx.log.filter((c) => c === 0xfb).length;
-  assert.ok(polls <= 30, `waiting is bounded (15 quick polls, then slower ones up to 5 s): ${polls} polls`);
-});
-
-test('2.4 GHz receiver: nothing is sent while the keyboard has not finished the previous exchange', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const send = rx.sendFeature.bind(rx);
-  let lost = false;
-  rx.sendFeature = async (d) => {
-    if (d[0] === 0x05 && !lost) { lost = true; rx.log.push(d[0]); rx.busyPolls = 100; return; } // radio lost it; keyboard stays busy
-    return send(d);
-  };
-  await assert.rejects(kb.setProfile(1), /did not confirm/);
-  await assert.rejects(kb.getDeviceId(), /still busy/);
-  assert.equal(rx.log.filter((c) => c === 0x05 || c === 0x8f).length, 1, 'neither a re-send nor the next command went out');
-});
-
-test('2.4 GHz receiver: waits for a write still in flight before sending', async () => {
-  const rx = new FakeReceiver({ busyPolls: 4 });
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  assert.equal(await kb.getDeviceId(), 594);
-  assert.ok(rx.log.indexOf(0x8f) > 4, 'command sent only after the busy polls');
-  assert.equal(rx.kbSends, 1);
 });
 
 test('2.4 GHz receiver: writes complete on is_write_finish (no reply expected)', async () => {
@@ -373,204 +333,208 @@ test('colour mode codes: PC75B Plus+ uses 7 = rainbow, 8 = solid; others keep ve
   assert.equal(Keyboard.encodeLight(7, { type: 'LightAlwaysOn', value: 4, rgb: 1, dazzle: true }, true)[4] & 15, 8);
 });
 
-test('verified key-map write: rewrites once when the keyboard did not store it, errors after that', async () => {
-  const { t, kb } = setup();
-  const m = Uint8Array.from(MODELS[0].matrix);
-  m.set([3, 0, 111, 0], 48 * 4);
-  assert.equal(await kb.setKeyMatrixVerified(m, 0), 0); // stored first time
-  // drop the first page once (simulates a link hiccup mid-write)
-  const real = t.sendFeature.bind(t);
-  let dropped = false;
-  t.sendFeature = async (d) => { if (d[0] === CMD.SET_KEYMATRIX && d[4] === 0 && !dropped) { dropped = true; return; } return real(d); };
-  m.set([0, 0, 57, 0], 0);
-  assert.equal(await kb.setKeyMatrixVerified(m, 0), 1); // needed one rewrite
-  assert.deepEqual(Array.from(t.matrices[0].slice(0, 4)), [0, 0, 57, 0]);
-  // keyboard never stores it -> clear error
-  t.sendFeature = async (d) => (d[0] === CMD.SET_KEYMATRIX ? undefined : real(d));
-  m.set([0, 0, 58, 0], 0);
-  await assert.rejects(kb.setKeyMatrixVerified(m, 0), /key map did not finish/);
-});
-
-test('verified write: an upload cut off part way is redone in full', async () => {
-  const kb = new Keyboard(new DemoTransport(MODELS[1]));
-  const m = Uint8Array.from(MODELS[1].matrix);
-  m.set([9, 0, 19, 0], 50 * 4);
-  const real = kb.setKeyMatrix.bind(kb);
-  let calls = 0;
-  kb.setKeyMatrix = async (data, p) => {
-    if (++calls === 1) {
-      await kb.writePaged(0x09, p, data.slice(0, 112), 2, 0); // only 2 of 9 pages arrive
-      throw new Error('link dropped');
-    }
-    return real(data, p);
-  };
-  assert.equal(await kb.setKeyMatrixVerified(m, 0), 1);
-  assert.equal(calls, 2);
-  assert.deepEqual(Array.from((await kb.getKeyMatrix(0)).slice(50 * 4, 50 * 4 + 4)), [9, 0, 19, 0]);
-});
-
-test('verified write: still incomplete after the retry -> IncompleteWriteError', async () => {
-  const { IncompleteWriteError } = await import('../web/js/protocol.js');
-  const kb = new Keyboard(new DemoTransport(MODELS[1]));
-  kb.setKeyMatrix = async () => { throw new Error('link dropped'); };
-  await assert.rejects(kb.setKeyMatrixVerified(Uint8Array.from(MODELS[1].matrix), 0), (e) => e instanceof IncompleteWriteError && /Write to keyboard/.test(e.message));
-});
-
-test('macro writes are read back', async () => {
-  const kb = new Keyboard(new DemoTransport(MODELS[1]));
+// Like the official app: writes are not read back, and every page is asked for once.
+test('key map, Fn layer and macro writes are not read back (like the official app)', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
-  assert.equal(await kb.setMacroVerified(19, ev, 1), 0);
-  assert.deepEqual((await kb.getMacro(19)).events, ev);
+  await kb.setMacro(2, ev, 1);
+  await kb.setKeyMatrix(Uint8Array.from(MODELS[1].matrix), 0);
+  await kb.setFnMatrix(new Uint8Array(512), 0);
+  const sent = rx.log.filter((c) => ![0xfb, 0xfc, 0xfd, 0xfe].includes(c));
+  assert.deepEqual([...new Set(sent)], [0x0b, 0x09, 0x10], 'only writes');
+  assert.equal(sent.length, 5 + 9 + 9);
+  assert.deepEqual((await kb.getMacro(2)).events, ev, 'stored as written');
 });
 
-// receiver that returns one reply with its last 16 bytes zeroed (lost radio block)
-class LossyReceiver extends FakeReceiver {
-  constructor(losePage) { super(); this.losePage = losePage; this.lost = 0; this.queries = []; }
+test('every page is read once: key map 8, Fn layer 8, macro 4, per-key colours 6 (like the official app)', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const count = async (fn) => { const before = rx.kbSends; await fn(); return rx.kbSends - before; };
+  assert.equal(await count(() => kb.getKeyMatrix(0)), 8);
+  assert.equal(await count(() => kb.getFnMatrix(0)), 8);
+  assert.equal(await count(() => kb.getMacro(0)), 4);
+  assert.equal(await count(() => kb.getUserPicture()), 6);
+});
+
+// macOS: the first read right after a request can still return the previous reply
+class MacLikeReceiver extends FakeReceiver {
+  constructor() { super(); this.prev = new Uint8Array(64); this.stale = 0; }
   async sendFeature(d) {
-    if (d[0] === 0x89 || d[0] === 0x8b) this.queries.push(d[2]);
+    const before = Uint8Array.from(this.out);
     await super.sendFeature(d);
-    if (d[0] === 0xfc && this.queries.at(-1) === this.losePage && !this.lost) {
-      this.lost++;
-      this.out = Uint8Array.from(this.out);
-      this.out.fill(0, 48, 64);
-    }
+    if (d[0] === 0xfb || d[0] === 0xfd) { this.prev = before; this.stale = 1; }
+  }
+  async receiveFeature() {
+    if (this.stale > 0) { this.stale--; const o = new Uint8Array(64); o.set(this.prev.slice(0, 64)); return o; }
+    return super.receiveFeature();
   }
 }
 
-test('2.4 GHz receiver: a page with a lost 16-byte block is read again (keys 12-15 not "disabled")', async () => {
-  const rx = new LossyReceiver(0);
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const m = await kb.getKeyMatrix(0, Uint8Array.from(rx.kb.matrices[0]));
-  const want = rx.kb.matrices[0];
-  assert.deepEqual(Array.from(m.slice(0, want.length)), Array.from(want));
-  assert.equal(rx.lost, 1);
-  assert.equal(rx.queries.filter((p) => p === 0).length, 2, 'page 0 read twice');
-  assert.equal(rx.queries.length, 9, 'pages matching the reference are read once');
-});
-
-test('2.4 GHz receiver: keys really disabled are accepted after two identical reads', async () => {
-  const rx = new FakeReceiver();
-  rx.kb.matrices[0].fill(0, 48, 64); // the user disabled keys 12-15
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const m = await kb.getKeyMatrix(0, MODELS[1].matrix);
-  assert.ok(m.slice(48, 64).every((b) => b === 0));
-});
-
-test('2.4 GHz receiver: macro reads recover a lost block too', async () => {
-  const rx = new LossyReceiver(0);
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const ev = Array.from({ length: 12 }, (_, i) => [{ type: 'keyboard', action: 'down', value: 4 + i }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 + i }, { type: 'delay', value: 20 }]).flat();
-  await kb.setMacro(3, ev, 1);
-  rx.queries = [];
-  assert.deepEqual((await kb.getMacro(3)).events, ev);
-  assert.equal(rx.lost, 1);
-});
-
-test('2.4 GHz receiver: a stale reply (previous page\'s data) is caught by the second read', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const send = rx.sendFeature.bind(rx);
-  let last, stale = 0;
-  rx.sendFeature = async (d) => {
-    await send(d);
-    if (d[0] === 0xfc) {
-      if (rx.log.at(-3) === 0x89 && !stale && last) { stale++; rx.out = last; } // page 3 gets page 2's data once
-      else last = Uint8Array.from(rx.out);
-    }
-  };
-  const ref = Uint8Array.from(MODELS[1].matrix);
-  rx.kb.matrices[0].set([9, 0, 0, 0], 48 * 4); // F8 -> macro, so page 3 differs from the reference
-  const m = await kb.getKeyMatrix(0, ref);
-  const want = rx.kb.matrices[0];
-  assert.deepEqual(Array.from(m.slice(0, want.length)), Array.from(want));
-});
-
-test('2.4 GHz receiver: a stale cached map heals (pages that differ are confirmed)', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const badCache = Uint8Array.from(rx.kb.matrices[0]);
-  badCache.fill(0, 48, 64); // cache from a corrupted read
-  const m = await kb.getKeyMatrix(0, badCache);
-  assert.deepEqual(Array.from(m.slice(48, 64)), Array.from(rx.kb.matrices[0].slice(48, 64)));
-  assert.equal(rx.kbSends, 9, 'page 0 read twice, the rest once');
-});
-
-test('2.4 GHz receiver: after the keyboard wakes, commands wait until the link has settled', async () => {
-  const rx = new FakeReceiver({ asleepPolls: 30 }); // asleep, then a key press wakes it
+test('2.4 GHz receiver on macOS: a stale reply to the link check is read again, not taken as "no keyboard paired"', async () => {
+  const rx = new MacLikeReceiver();
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   assert.equal(await kb.getDeviceId(), 594);
-  const statusPolls = rx.log.slice(0, rx.log.indexOf(0x8f)).filter((c) => c === 0xfb).length;
-  assert.ok(statusPolls >= 30 + 5, `kept polling while online before sending (${statusPolls} polls)`);
-  assert.equal(rx.kbSends, 1);
+  assert.deepEqual(await kb.getLinkStatus(), { linked: true, battery: 66 });
 });
 
-test('macro reads stop at the end of the macro (a short macro is 1 page, not 4)', async () => {
-  const rx = new LossyReceiver(-1); // no loss, just counts 0x8B page queries
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
-  await kb.setMacro(5, ev, 1);
-  rx.queries = [];
-  assert.deepEqual((await kb.getMacro(5)).events, ev);
-  assert.deepEqual([...new Set(rx.queries)], [0], 'only page 0 was read (twice over the receiver, to confirm it)');
-  rx.queries = [];
-  assert.deepEqual((await kb.getMacro(6)).events, [], 'an empty slot is one page too');
-  assert.deepEqual([...new Set(rx.queries)], [0]);
-});
+// macOS race: a request arriving < 5 ms after a command overwrites it before the
+// receiver takes it, so the command is lost (no busy, no reply)
+class RacyReceiver extends FakeReceiver {
+  constructor() { super(); this.lastSet = 0; this.lastWasCommand = false; this.lost = 0; }
+  async sendFeature(d) {
+    const now = performance.now();
+    if (this.lastWasCommand && now - this.lastSet < 5) { this.lost++; this.reply = false; this.pending = 0; }
+    this.lastSet = now;
+    this.lastWasCommand = ![0xfb, 0xfc, 0xfd].includes(d[0]);
+    return super.sendFeature(d);
+  }
+}
 
-test('2.4 GHz receiver: a slow confirmation gives the keyboard a break before the next command', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  await kb.getDeviceId();
-  assert.equal(kb.coolDown, 0, 'a quick confirmation costs nothing');
-  const send = rx.sendFeature.bind(rx);
-  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x85) rx.pending = 6; }; // keyboard slow to confirm
-  await kb.getProfile();
-  assert.ok(kb.coolDown > 0, 'cool-down scheduled after a slow confirmation');
-  rx.sendFeature = send;
-  await kb.getDeviceId();
-  assert.equal(kb.coolDown, 0, 'used up by the next command');
-});
-
-test('2.4 GHz receiver: a keyboard that goes quiet mid-command and comes back finishes the command (no re-send)', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const events = [];
-  kb.onAsleep = (v) => events.push(v);
-  const send = rx.sendFeature.bind(rx);
-  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f) rx.asleepPolls = 200; }; // offline for a while right after the query
-  assert.equal(await kb.getDeviceId(), 594);
-  assert.equal(rx.kbSends, 1, 'the query was sent once');
-  assert.deepEqual(events, [true, false], 'the "press any key" banner was shown while it was quiet');
-});
-
-test('2.4 GHz receiver: one slow reply gives one rest, not a rest after every command', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const send = rx.sendFeature.bind(rx);
-  let slow = true;
-  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f && slow) { slow = false; rx.pending = 15; } }; // answers, but slowly
-  globalThis.setTimeout = realSetTimeout; // real timers: the rest must take real time
+test('2.4 GHz receiver: requests are spaced like the vendor, so a command is not overwritten (macOS race)', async () => {
+  const rx = new RacyReceiver();
+  const kb = new Keyboard(rx, { dongle: true }); // real pacing
+  globalThis.setTimeout = realSetTimeout; // real timers: the gap must take real time
   try {
-    await kb.getDeviceId(); // slow reply
-    assert.ok(kb.coolDown > 0, 'rest scheduled after the slow reply');
-    await kb.getProfile(); // quick reply, after the rest
-    assert.equal(kb.coolDown, 0, 'the rest itself does not count as a slow reply');
-    await kb.getProfile();
-    assert.equal(kb.coolDown, 0);
+    assert.equal(await kb.getDeviceId(), 594);
+    assert.equal(await kb.getProfile(), 0);
   } finally {
     globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
   }
+  assert.equal(rx.lost, 0, 'no command was overwritten');
 });
 
-test('2.4 GHz receiver: the app is told when the keyboard answers slowly, and when it is fast again', async () => {
+test('2.4 GHz receiver: the app is told when the keyboard answers slowly (past the 15 vendor polls), and when it is fast again', async () => {
   const rx = new FakeReceiver();
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   const events = [];
   kb.onSlow = (v) => events.push(v);
   const send = rx.sendFeature.bind(rx);
   let slow = true;
-  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f && slow) { slow = false; rx.pending = 18; } }; // power-saving: slow reply
+  rx.sendFeature = async (d) => { await send(d); if (d[0] === 0x8f && slow) { slow = false; rx.pending = 18; } }; // slow reply
   await kb.getDeviceId();
-  await kb.getProfile(); // after a key press: quick
+  await kb.getProfile(); // quick
   assert.deepEqual(events, [true, false]);
+});
+
+test('2.4 GHz receiver: like the official driver, a command is never sent twice', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const send = rx.sendFeature.bind(rx);
+  rx.sendFeature = async (d) => {
+    if (d[0] === 0x8f) { rx.log.push(d[0]); rx.kbSends++; rx.reply = false; rx.pending = 0; return; } // delivered, never answered
+    return send(d);
+  };
+  await assert.rejects(kb.getDeviceId(), /did not answer/);
+  assert.equal(rx.log.filter((c) => c === 0x8f).length, 1, 'sent once');
+});
+
+test('2.4 GHz receiver: a reply delivered when the keyboard comes back is fetched, not asked for again', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const send = rx.sendFeature.bind(rx);
+  let dropped = false;
+  rx.sendFeature = async (d) => {
+    if (d[0] === 0x8f && !dropped) { // the query reaches the keyboard, which drops off before answering
+      dropped = true;
+      await send(d);
+      rx.pending = 1000;
+      setTimeout(() => { rx.pending = 0; rx.asleepPolls = 120; }, 0); // back later, reply ready
+      return;
+    }
+    return send(d);
+  };
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(rx.log.filter((c) => c === 0x8f).length, 1, 'asked only once');
+});
+
+test('2.4 GHz receiver: keep-alive asks one small query once idle, and leaves a sleeping keyboard alone', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getProfile();
+  assert.equal(await kb.keepAlive(30000), false, 'not while recently active');
+  kb.lastDoneAt = Date.now() - 31000 * 0.05;
+  const before = rx.kbSends;
+  assert.equal(await kb.keepAlive(30000), true);
+  assert.equal(rx.kbSends, before + 1);
+  kb.lastDoneAt = 0;
+  rx.asleepPolls = 1;
+  assert.equal(await kb.keepAlive(30000), false, 'asleep: no command');
+  assert.equal(rx.kbSends, before + 1);
+});
+
+test('2.4 GHz receiver: nothing is sent again while the keyboard stays busy', async () => {
+  const rx = new FakeReceiver({ stall: true }); // busy forever after the first command
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await assert.rejects(kb.setProfile(1), /did not confirm/);
+  assert.equal(rx.kbSends, 1, 'not re-sent into a busy keyboard');
+});
+
+test('2.4 GHz receiver: each command follows the official helper order', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getProfile();
+  const seq = rx.log.map((c) => c.toString(16)).join(' ').replace(/(fb ?)+/g, 'fb… ').trim();
+  // send_msg: [FD], wait write finish, send, [FD], wait write finish; read_msg: [FD], wait ready, [FC]
+  assert.equal(seq, 'fd fb… 85 fd fb… fd fb… fc');
+});
+
+test('2.4 GHz receiver: nothing is sent while the previous exchange is unfinished', async () => {
+  const rx = new FakeReceiver({ busyPolls: 4 }); // receiver still busy with an earlier write
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const sentAfter = [];
+  const send = rx.sendFeature.bind(rx);
+  rx.sendFeature = async (d) => { if (d[0] === 0x85) sentAfter.push(rx.busyPolls); return send(d); };
+  await kb.getProfile();
+  assert.deepEqual(sentAfter, [0], 'sent only once the receiver reported write finished');
+});
+
+test('2.4 GHz receiver: connecting sends [FD] and [FE 40] first, like the helper get_id', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  assert.equal(await kb.rxInit(), true);
+  assert.deepEqual(rx.log, [0xfd, 0xfe, 0xfb]); // then a status check for a leftover reply
+  assert.equal(rx.nextLen, 64);
+  assert.equal(rx.kbSends, 0, 'nothing reaches the keyboard');
+});
+
+test('2.4 GHz receiver: a reply left over from a cut-off exchange is cleared, not taken as the next answer', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await rx.kb.sendFeature(Uint8Array.from([0x8f, 0, 0, 0, 0, 0, 0, 0x70])); // keyboard-ID reply from a failed connect ...
+  rx.reply = true; // ... still waiting in the receiver
+  const notes = [];
+  kb.onNote = (n) => notes.push(n);
+  await kb.rxInit();
+  assert.ok(notes.some((n) => /leftover reply \(8f/.test(n)), notes.join(' | '));
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(await kb.getProfile(), 0, 'not 0x52 from the old ID reply');
+});
+
+test('2.4 GHz receiver: a reply that belongs to another command is not used', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getDeviceId();
+  const stale = Uint8Array.from(rx.out); // the ID reply
+  const send = rx.sendFeature.bind(rx);
+  let once = true;
+  rx.sendFeature = async (d) => {
+    await send(d);
+    if (d[0] === 0xfc && once && rx.log.includes(0x85)) { once = false; rx.out = stale; rx.reply = true; rx.pending = 1; } // wrong reply, right one comes after
+  };
+  assert.equal(await kb.getProfile(), 0);
+});
+
+test('2.4 GHz receiver: the 5 s background check only talks to the receiver, and waits while busy', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await kb.getProfile();
+  assert.equal(await kb.rxBackgroundStatus(), undefined, 'not right after a command');
+  kb.lastDoneAt = Date.now() - 6000 * 0.05;
+  rx.log.length = 0;
+  const before = rx.kbSends;
+  const st = await kb.rxBackgroundStatus();
+  assert.deepEqual(st, { linked: true, online: true, battery: 66 });
+  assert.deepEqual(rx.log, [0xfd, 0xfb]);
+  assert.equal(rx.kbSends, before);
 });

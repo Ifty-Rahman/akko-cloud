@@ -51,7 +51,7 @@
           </ol>
           <div class="wired-note" role="note">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0zM12 16.5V21"/></svg>
-            <p><b>Use the USB cable if you can.</b> The wireless connection can drop now and then while settings are being read or written. On the receiver, press any key first so the keyboard is awake.</p>
+            <p><b>Use the USB cable if you can.</b> The wireless connection can drop now and then while settings are being read or written.</p>
           </div>
           <div class="connect-actions">
             <button class="primary big" id="connectUsbBtn">Connect keyboard</button>
@@ -141,12 +141,10 @@
         <div hidden id="settingsParts">
           <section class="settings-section" id="backupSection">
             <h2>Backup &amp; restore</h2>
-            <div class="maint-row">
-              <p class="muted small">Save every profile (key maps, Fn layers, lighting, options) and the macros your keys use to a file, and restore it later or on another PC75B.</p>
-              <div class="row">
-                <button class="primary" id="exportBtn">Export</button>
-                <label class="button">Import<input type="file" id="importFile" accept="application/json,.json" hidden></label>
-              </div>
+            <p class="muted small">Save every profile (key maps, Fn layers, lighting, options) and the macros your keys use to a file, and restore it later or on another PC75B.</p>
+            <div class="row backup-actions">
+              <button class="primary" id="exportBtn">Export backup</button>
+              <label class="button">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>
             </div>
             <p class="muted small" id="backupStatus"></p>
           </section>
@@ -169,7 +167,7 @@
             <div class="card-head">
               <h2>Debug log</h2>
               <span class="spacer"></span>
-              <label class="switch"><input type="checkbox" id="logToggle" checked><span>Record packets</span></label>
+              <label class="switch"><input type="checkbox" id="logToggle"><span>Record packets</span></label>
               <button class="ghost" id="logClearBtn">Clear</button>
               <button id="logDownloadBtn">Download log</button>
             </div>

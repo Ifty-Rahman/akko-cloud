@@ -456,7 +456,7 @@ main { max-width: none; margin: 0; padding: 0; min-height: 0; overflow: auto; }
 #backupStatus:empty { display: none; }
 #backupStatus { margin: 8px 0 0; }
 .settings-section.maint { margin-top: auto; }
-.settings-main .opt-list { max-width: 560px; }
+
 
 /* Macros: library and editor fill the height; the steps scroll inside */
 .panel-macros .macro-layout { height: 100%; }
@@ -571,3 +571,8 @@ button.big { min-height: 46px; padding: 11px 24px; font-size: 1rem; }
 .busy.wave #busyText::before { content: ''; display: inline-block; width: 1.1em; }
 .busy.wave .busy-head { text-align: center; }
 .busy.wave #busyText { white-space: nowrap; }
+.settings-section > p.muted.small { margin: 0 0 10px; }
+/* Keyboard options: every toggle the same distance from its text, in one column */
+.settings-main .opt-list { grid-template-columns: max-content auto; column-gap: 32px; justify-content: start; }
+.settings-main .opt-list .switch { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; width: auto; }
+.sleep-card .card-actions { justify-content: flex-end; }

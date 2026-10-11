@@ -63,6 +63,7 @@ async function busy(text, fn, steps = 0) {
   $('#busy').classList.toggle('wave', wave);
   setBusyBar(p.steps ? 0 : null);
   $('#busy').hidden = false;
+  busyDepth++; // an operation started from inside another keeps the overlay up
   const timer = setInterval(() => {
     if (p.steps && S.kb) setBusyBar(Math.min(99, ((S.kb.done ?? 0) - start) / p.steps * 100));
   }, 120);
@@ -77,9 +78,10 @@ async function busy(text, fn, steps = 0) {
     return undefined;
   } finally {
     clearInterval(timer);
-    $('#busy').hidden = true;
+    if (--busyDepth === 0) $('#busy').hidden = true;
   }
 }
+let busyDepth = 0;
 // Keycap grids whose lights sweep across in a rainbow wave (connect page art
 // and the connecting overlay). Pure CSS animation, staggered per key.
 function buildWaveKeyboards() {
@@ -125,7 +127,8 @@ const S = {
   pic: new Uint8Array(384),
   pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
-  logging: true, // on by default for now (connect troubleshooting); switch in the Debug tab
+  // packet recording: on by default while developing on this computer, off on the live site
+  logging: ['localhost', '127.0.0.1'].includes(location.hostname),
   logLines: [],
   music: undefined,
   screen: undefined,
@@ -459,46 +462,39 @@ async function readLayer({ force = false } = {}) {
     renderEditor();
     return;
   }
-  const base = cachedMatrix();
-  S.orig = Uint8Array.from(base);
-  S.work = Uint8Array.from(base);
+  // read from the keyboard behind the usual progress overlay (8 pages)
   S.keysVerified = false;
-  setKeysLoading('loading');
-  renderKeys();
-  renderEditor();
-  try {
-    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile) : await S.kb.getFnMatrix(layerIndex());
-    if (token !== S.keysToken) return; // a newer load replaced this one
-    const merged = Uint8Array.from(m);
-    let edits = 0;
-    for (let i = 0; i < 128; i++) {
-      if (!eqBytes(slot(S.work, i), slot(base, i))) {
-        merged.set(slot(S.work, i), i * 4);
-        edits++;
+  S.keysLoading = true;
+  setKeysLoading(null);
+  await busy('Loading keys', async () => {
+    try {
+      const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile) : await S.kb.getFnMatrix(layerIndex());
+      if (token !== S.keysToken) return; // a newer load replaced this one
+      S.orig = Uint8Array.from(m);
+      S.work = Uint8Array.from(m);
+      S.pendingMacros.clear();
+      storeMatrix(m);
+      S.keysVerified = true;
+      syncMacroModes();
+    } catch (e) {
+      if (token === S.keysToken) {
+        S.orig = cachedMatrix();
+        S.work = Uint8Array.from(S.orig);
+        setKeysLoading('error', e);
+      }
+      throw e;
+    } finally {
+      S.keysLoading = false;
+      if (token === S.keysToken) {
+        renderKeys();
+        renderEditor();
+        updateDirty();
       }
     }
-    S.orig = Uint8Array.from(m);
-    S.work = merged;
-    if (!edits) S.pendingMacros.clear();
-    storeMatrix(m);
-    S.keysVerified = true;
-    setKeysLoading(null);
-    syncMacroModes();
-  } catch (e) {
-    if (token === S.keysToken) setKeysLoading('error', e);
-    throw e;
-  } finally {
-    if (token === S.keysToken) {
-      renderKeys();
-      renderEditor();
-    }
-  }
+  }, 8);
 }
 
-let keysProgressTimer;
 function setKeysLoading(state, err) {
-  clearInterval(keysProgressTimer);
-  S.keysLoading = state === 'loading';
   const note = $('#keysLoading');
   note.hidden = !state;
   note.classList.toggle('err', state === 'error');
@@ -507,17 +503,6 @@ function setKeysLoading(state, err) {
     note.hidden = false;
     note.replaceChildren('Key map from the copy saved in this browser. Changed keys outside Akko Cloud? ',
       h('button', { type: 'button', class: 'linkish', onclick: () => { if (!isDirty() || confirm('Discard unsaved key changes and read the layer again?')) readLayer({ force: true }).catch(() => {}); } }, 'Read it from the keyboard'));
-  } else if (state === 'loading') {
-    const bar = h('i');
-    const pct = h('span', { class: 'busy-pct' }, '0%');
-    note.replaceChildren(h('b', {}, 'Loading keys'), h('span', { class: 'busy-track inline' }, bar), pct,
-      h('span', { class: 'muted small' }, 'You can already pick keys and make changes.'));
-    const start = S.kb?.done ?? 0;
-    keysProgressTimer = setInterval(() => {
-      const v = Math.min(99, (((S.kb?.done ?? 0) - start) / 8) * 100);
-      bar.style.width = `${v}%`;
-      pct.textContent = `${Math.round(v)}%`;
-    }, 120);
   } else if (state === 'error') {
     note.replaceChildren(`Couldn’t read the key map from the keyboard${err?.message ? ` (${err.message.replace(/\.$/, '')})` : ''}. Your changes are kept; writing is paused until the map has been read.`,
       h('button', { type: 'button', class: 'ghost', onclick: () => readLayer().catch(() => {}) }, 'Retry'));
@@ -1355,6 +1340,7 @@ function renderLog() {
   out.scrollTop = out.scrollHeight;
   updateFeedbackAttach();
 }
+$('#logToggle').checked = S.logging;
 $('#logToggle').addEventListener('change', (e) => {
   if (!e.target.checked) logNote('recording stopped');
   S.logging = e.target.checked;

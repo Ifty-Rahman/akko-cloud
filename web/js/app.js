@@ -421,8 +421,30 @@ function forgetSavedMatrices() {
   } catch { /* ignore */ }
 }
 try { for (const k of Object.keys(localStorage)) if (k.startsWith('akko-matrix:')) localStorage.removeItem(k); } catch { /* ignore */ }
-function storeMatrix(m) {
-  try { localStorage.setItem(cacheKey(), fmtHex(m).replaceAll(' ', '')); } catch { /* ignore */ }
+function storeMatrix(m, layer, idx) {
+  try { localStorage.setItem(cacheKey(layer, idx), fmtHex(m).replaceAll(' ', '')); } catch { /* ignore */ }
+}
+
+// Every profile and Fn layer, as [layer id, index] pairs (cache keys).
+const allLayers = () => [
+  ...Array.from({ length: S.model.profiles }, (_, p) => ['base', p]),
+  ...Array.from({ length: S.model.fnLayers }, (_, f) => [`fn${f}`, f]),
+];
+
+// Like the official app, which reads the key map of every profile and Fn
+// layer and so knows every macro slot any key uses: before a new macro gets a
+// slot (or keyboard macros are looked for), each layer this browser has no
+// copy of yet is read once. Otherwise a slot used by a key on an unseen
+// layer looked free, and a new macro overwrote the macro already in it.
+async function ensureAllLayersKnown() {
+  const missing = allLayers().filter(([layer, idx]) => !savedMatrix(layer, idx));
+  if (!missing.length || !S.kb) return;
+  await busy('Checking macro slots', async () => {
+    for (const [layer, idx] of missing) {
+      const m = layer === 'base' ? await S.kb.getKeyMatrix(idx) : await S.kb.getFnMatrix(idx);
+      storeMatrix(m, layer, idx);
+    }
+  }, missing.length * 8);
 }
 
 async function loadKeys() {
@@ -735,8 +757,9 @@ function renderEditor() {
   typeSel.addEventListener('change', build);
   build();
 
-  const apply = () => {
+  const apply = async () => {
     try {
+      if (typeSel.value === 'macro') await ensureAllLayersKnown();
       const bytes = encodeAction(read());
       S.work.set(bytes, idx * 4);
       renderKeys();
@@ -1020,6 +1043,7 @@ async function writeMacroToKeyboard(m, slotIndex) {
 async function syncKeyboardMacros() {
   if (!S.kb || S.macrosSynced) return;
   S.macrosSynced = true;
+  await ensureAllLayersKnown();
   const ok = await busy('Loading macros', async (p) => {
     const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => (p.steps = n * 4));
     if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
@@ -1098,7 +1122,7 @@ async function copyMacroToLibrary(s, mode) {
   await busy('Loading macro', async () => {
     const got = await S.kb.getMacro(s);
     if (!got.events.length) throw new Error('That keyboard slot is empty.');
-    const item = macrosView.adopt({ name: `Keyboard macro ${s + 1}`, mode, repeat: Math.max(1, got.repeatCount || 1), events: got.events });
+    const item = macrosView.adopt({ mode, repeat: Math.max(1, got.repeatCount || 1), events: got.events });
     const map = slotMap();
     for (const k of Object.keys(map)) if (map[k] === s) delete map[k];
     map[item.id] = s;

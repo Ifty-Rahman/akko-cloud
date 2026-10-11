@@ -51,13 +51,17 @@ function toast(msg, error = false) {
 // percentage. `steps` is how many keyboard commands the operation needs; the
 // bar follows the commands the keyboard has completed (kb.done). fn may raise
 // the estimate as it learns more: fn({ steps }) -> p.steps = n.
+// steps: commands the operation sends (progress bar with percentage), or
+// 'wave' for a keycap light wave instead (connecting, where a count means little).
 async function busy(text, fn, steps = 0) {
   const kb = S.kb;
   const start = kb?.done ?? 0;
-  const p = { steps };
+  const wave = steps === 'wave';
+  const p = { steps: wave ? 0 : steps };
   const label = text.replace(/…$/, '');
   $('#busyText').textContent = label;
-  setBusyBar(steps ? 0 : null);
+  $('#busy').classList.toggle('wave', wave);
+  setBusyBar(p.steps ? 0 : null);
   $('#busy').hidden = false;
   const timer = setInterval(() => {
     if (p.steps && S.kb) setBusyBar(Math.min(99, ((S.kb.done ?? 0) - start) / p.steps * 100));
@@ -76,6 +80,22 @@ async function busy(text, fn, steps = 0) {
     $('#busy').hidden = true;
   }
 }
+// Keycap grids whose lights sweep across in a rainbow wave (connect page art
+// and the connecting overlay). Pure CSS animation, staggered per key.
+function buildWaveKeyboards() {
+  for (const el of $$('.wave-kb')) {
+    const rows = Number(el.dataset.rows), cols = Number(el.dataset.cols);
+    el.style.setProperty('--cols', cols);
+    el.replaceChildren(...Array.from({ length: rows * cols }, (_, i) => {
+      const k = document.createElement('i');
+      k.style.setProperty('--x', i % cols);
+      k.style.setProperty('--y', Math.floor(i / cols));
+      return k;
+    }));
+  }
+}
+buildWaveKeyboards();
+
 function setBusyBar(pct) {
   const box = $('#busy');
   box.classList.toggle('indeterminate', pct === null);
@@ -134,7 +154,7 @@ function initConnect() {
     hint.textContent = 'WebHID needs a secure page. Open this site over https:// (or on localhost when developing).';
     $('#connectUsbBtn').disabled = true;
   } else {
-    hint.textContent = 'Press any key on the keyboard first (it answers faster right after a key press), then pick it in the browser prompt. On Linux, install the udev rule from the project README first.';
+    hint.textContent = 'On Linux, install the udev rule from the project README first.';
   }
   $('#connectUsbBtn').addEventListener('click', async () => {
     try {
@@ -213,7 +233,7 @@ async function connect(transport) {
       disconnect();
     });
     showApp();
-  }, 2);
+  }, 'wave');
   const kb = S.kb;
   if (!kb) {
     $('#connectLogRow').hidden = !S.logLines.length; // connect failed: offer the log
@@ -1117,7 +1137,7 @@ async function loadSettings() {
   const rateSel = h('select', {}, m.reportRates.map((r) => h('option', { value: r, selected: r === rate }, `${r} Hz`)));
   const debVal = h('b', {}, deb);
   const debIn = h('input', { type: 'range', min: m.debounce.min, max: m.debounce.max, value: Math.min(m.debounce.max, Math.max(m.debounce.min, deb || 1)), oninput: (e) => (debVal.textContent = e.target.value) });
-  const perf = h('div', { class: 'card' }, h('h2', {}, 'Performance'), h('div', { class: 'form' },
+  const perf = h('section', { class: 'settings-section' }, h('h2', {}, 'Performance'), h('div', { class: 'form' },
     h('label', { class: 'field' }, h('span', {}, 'Polling rate (this profile)'),
       h('div', { class: 'inline-apply' }, rateSel, h('button', { onclick: () => busy('Setting polling rate', async () => { await S.kb.setReportRate(Number(rateSel.value)); toast('Polling rate saved'); }, 1) }, 'Apply'))),
     h('label', { class: 'field' }, h('span', {}, 'Debounce: ', debVal, h('span', { class: 'muted' }, ' (1 = fastest, 10 = most stable)')),
@@ -1143,7 +1163,7 @@ async function loadSettings() {
     bt: sleepRow('Lights off after', LIGHTS, sl.bt, m.sleep.min, m.sleep.max),
     deepBt: sleepRow('Sleep after', SLEEP, sl.deepBt, m.sleep.minDeep, m.sleep.maxDeep),
   };
-  const sleepCard = h('div', { class: 'card' }, h('h2', {}, 'Wireless power saving'),
+  const sleepCard = h('div', { class: 'card sleep-card' }, h('h2', {}, 'Wireless power saving'),
     h('p', { class: 'muted small' }, 'Both timers count from your last key press, and any key brings the keyboard back. On battery, once the lights go off the keyboard also stops answering this app over the 2.4 GHz receiver until you press a key. While it charges, the lights stay on.'),
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
     S.transport?.dongle ? h('label', { class: 'switch keep-alive' },
@@ -1173,10 +1193,10 @@ async function loadSettings() {
       S.options = next;
       toast('Saved');
     }, 2) }));
-  const optCard = h('div', { class: 'card' }, h('h2', {}, 'Keyboard options (this profile)'), h('div', { class: 'opt-list' }, toggles.map(mk)),
+  const optCard = h('section', { class: 'settings-section' }, h('h2', {}, 'Keyboard options (this profile)'), h('div', { class: 'opt-list' }, toggles.map(mk)),
     h('p', { class: 'muted small', style: 'margin-top:12px' }, `OS mode: ${S.options.macMode ? 'Mac' : 'Windows'}. Set it with the switch on the back of the keyboard (left = Windows, right = Mac).`));
 
-  const maint = h('div', { class: 'card' }, h('h2', {}, 'Maintenance'),
+  const maint = h('section', { class: 'settings-section maint' }, h('h2', {}, 'Maintenance'),
     h('p', { class: 'muted' }, 'Factory reset restores every profile, key map, macro and lighting setting to defaults.'),
     h('button', { class: 'danger', onclick: async () => {
       if (!confirm('Reset the keyboard to factory defaults? This cannot be undone.')) return;
@@ -1192,7 +1212,8 @@ async function loadSettings() {
     } }, 'Factory reset'),
     h('p', { class: 'muted small', style: 'margin-top:12px' }, 'Firmware updates are not supported by Akko Cloud.'));
 
-  grid.replaceChildren(sleepCard, perf, optCard, maint); // power saving first, factory reset last
+  // two halves: power saving on the left, everything else in one card on the right (factory reset last)
+  grid.replaceChildren(sleepCard, h('div', { class: 'card settings-main' }, perf, optCard, maint));
 }
 
 // ================================================================== BACKUP

@@ -30,18 +30,37 @@
   <main>
     <!-- Connection screen -->
     <section id="connectView" class="connect">
-      <h1>Configure your Akko PC75B</h1>
-      <p class="lead">Lighting, key remapping, macros and keyboard settings — straight from the browser. No vendor app required.</p>
+      <div class="hero">
+        <div class="hero-text">
+          <span class="eyebrow">Akko Cloud · web configurator</span>
+          <h1>Configure your <span class="grad">Akko&nbsp;PC75B</span> in the browser</h1>
+          <p class="lead">Lighting, key remapping, macros and keyboard settings. No vendor app, nothing to install.</p>
+          <ul class="chips" aria-label="Features">
+            <li>Per-key RGB</li><li>Key remapping</li><li>Macros</li><li>Knob actions</li><li>Backups</li>
+          </ul>
+        </div>
+        <div class="hero-art" aria-hidden="true"><div class="wave-kb" data-rows="5" data-cols="14"></div></div>
+      </div>
+
       <div class="connect-grid">
-        <div class="card">
+        <div class="card connect-card">
           <h2>Connect your keyboard</h2>
-          <p>Plug the keyboard (or its 2.4 GHz receiver) into this computer. Needs Chrome, Edge, Opera or Brave on desktop.</p>
-          <p class="hint">Using the receiver? Press any key on the keyboard first, so it’s awake.</p>
-          <button class="primary" id="connectUsbBtn">Connect keyboard</button>
+          <ol class="steps">
+            <li>Plug the keyboard in with its <b>USB cable</b>, or plug in its 2.4&nbsp;GHz receiver.</li>
+            <li>Click <b>Connect keyboard</b> and pick it in the browser’s list.</li>
+          </ol>
+          <div class="wired-note" role="note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0zM12 16.5V21"/></svg>
+            <p><b>Use the USB cable if you can.</b> The wireless connection can drop now and then while settings are being read or written. On the receiver, press any key first so the keyboard is awake.</p>
+          </div>
+          <div class="connect-actions">
+            <button class="primary big" id="connectUsbBtn">Connect keyboard</button>
+            <span class="hint">Chrome, Edge, Opera or Brave on desktop</span>
+          </div>
           <p class="hint" id="webhidHint"></p>
           <p class="hint" id="connectLogRow" hidden>Connecting didn’t work? <button type="button" class="linkish" id="connectLogBtn">Download the debug log</button> and send it along with your report.</p>
         </div>
-        <div class="card subtle">
+        <div class="card demo-card">
           <h2>Just looking?</h2>
           <p>Explore every screen with a simulated keyboard. Nothing is written to real hardware.</p>
           <button id="demoBtn">Open demo</button>
@@ -173,6 +192,7 @@
     <div class="busy-card" role="status" aria-live="polite">
       <div class="busy-head"><span id="busyText">Working</span><span class="busy-pct" id="busyPct"></span></div>
       <div class="busy-track"><i id="busyBar"></i></div>
+      <div class="wave-kb small" data-rows="3" data-cols="10" aria-hidden="true"></div>
     </div>
   </div>
   <div class="asleep-banner" id="asleepBanner" role="alert" hidden></div>

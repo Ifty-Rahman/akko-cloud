@@ -569,6 +569,5 @@ button.big { min-height: 46px; padding: 11px 24px; font-size: 1rem; }
 .busy.wave #busyText::after { content: ''; display: inline-block; width: 1.1em; text-align: left; animation: dots 1.4s steps(1) infinite; }
 @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
 .busy.wave #busyText::before { content: ''; display: inline-block; width: 1.1em; }
-.busy-hint { margin: 0; color: var(--muted); font-size: 0.85rem; text-align: center; }
 .busy.wave .busy-head { text-align: center; }
 .busy.wave #busyText { white-space: nowrap; }

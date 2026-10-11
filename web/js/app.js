@@ -125,7 +125,7 @@ const S = {
   pic: new Uint8Array(384),
   pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
-  logging: false, // the user turns recording on in the Debug tab
+  logging: true, // on by default for now (connect troubleshooting); switch in the Debug tab
   logLines: [],
   music: undefined,
   screen: undefined,
@@ -172,35 +172,6 @@ function initConnect() {
   }
 }
 
-// Over the receiver, the first commands go out right after a key press on the
-// keyboard. Then it answers at full speed (~0.35 s a command); every connect
-// drop in the debug logs hit a keyboard nobody had touched for a while, and
-// only a key press could bring it back. A key pressed in the last 3 s counts.
-let lastKeyAt = 0;
-addEventListener('keydown', () => { lastKeyAt = Date.now(); }, true);
-function waitForKeyPress(timeoutMs = 30000) {
-  if (Date.now() - lastKeyAt < 3000) return Promise.resolve();
-  const text = $('#busyText');
-  const hint = $('#busyHint');
-  text.textContent = 'Press any key on your keyboard';
-  hint.textContent = 'This wakes it up, so connecting over the 2.4 GHz receiver doesn’t drop.';
-  hint.hidden = false;
-  logNote('waiting for a key press before talking to the keyboard');
-  return new Promise((resolve) => {
-    const done = (how) => {
-      removeEventListener('keydown', onKey, true);
-      clearTimeout(timer);
-      text.textContent = 'Connecting';
-      hint.hidden = true;
-      logNote(how === 'key' ? 'key pressed: connecting' : 'no key pressed in 30 s: connecting anyway');
-      resolve();
-    };
-    const onKey = (e) => { e.preventDefault(); done('key'); };
-    addEventListener('keydown', onKey, true);
-    const timer = setTimeout(() => done('timeout'), timeoutMs);
-  });
-}
-
 async function connect(transport) {
   logNote('connecting');
   await busy('Connecting', async () => {
@@ -215,7 +186,6 @@ async function connect(transport) {
       throw e;
     }
     logNote(`connecting: ${transport.name} (${transport.dongle ? '2.4 GHz receiver' : transport.kind})`);
-    if (transport.dongle) await waitForKeyPress();
     const kb = new Keyboard(transport, { dongle: transport.dongle, log: logPacket });
     kb.onNote = logNote;
     let busyLabel;

@@ -105,7 +105,7 @@ const S = {
   pic: new Uint8Array(384),
   pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
-  logging: false, // the user turns recording on in the Debug tab
+  logging: true, // on by default for now (connect drops); can be switched off in the Debug tab
   logLines: [],
   music: undefined,
   screen: undefined,
@@ -153,6 +153,7 @@ function initConnect() {
 }
 
 async function connect(transport) {
+  logNote('connecting');
   await busy('Connecting', async () => {
     try {
       await transport.open();
@@ -1297,7 +1298,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ================================================================== LOG
-const LOG_MAX = 3000;
+const LOG_MAX = 20000; // ~30 min of receiver traffic
 function logLine(line) {
   if (!S.logging) return;
   S.logLines.push(`${new Date().toISOString().slice(11, 23)} ${line}`);

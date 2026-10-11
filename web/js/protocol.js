@@ -301,7 +301,8 @@ export class Keyboard {
   // before drops. A keyboard that dropped off the receiver usually comes back
   // by itself within a few seconds (seen: 2.4 s during a backup export), so it
   // is waited for (ensureAwake asks for a key press if that takes longer)
-  // instead of failing. Returns false if it stays online but busy.
+  // instead of failing. Returns the status once idle, or null if it stays
+  // online but busy.
   async waitIdle(timeoutMs = 3000) {
     let t0 = Date.now();
     for (let drops = 0; Date.now() - t0 < timeoutMs * this.rxPace;) {
@@ -314,20 +315,37 @@ export class Keyboard {
         t0 = Date.now();
         continue;
       }
-      if (s.online && (s.writeFinish || s.readyRead)) return true;
+      if (s.online && (s.writeFinish || s.readyRead)) return s;
       await this.rxPoll(RX_POLL_MS);
     }
-    return false;
+    return null;
   }
 
   async sendDongle(data, expectReply) {
     await this.pace();
+    const finished = (took) => {
+      if (took < SLOW_COMMAND_MS * this.rxPace) this.setSlow(false);
+      // a slow reply means the keyboard is under strain: let it rest as long
+      this.coolDown = took > SLOW_REPLY_MS * this.rxPace ? Math.min(took, SLOW_REST_MAX_MS * this.rxPace) : 0;
+      this.burst = (this.burst ?? 0) + 1;
+      this.lastDoneAt = Date.now();
+      this.done = (this.done ?? 0) + 1;
+    };
     for (let attempt = 0; attempt < SEND_ATTEMPTS; attempt++) {
       if (attempt) {
         await this.rxPoll(1000); // back off before sending again
-        if (!(await this.waitIdle())) {
+        const s = await this.waitIdle();
+        if (!s) {
           this.onNote?.('not sent again: the keyboard stayed busy');
           break;
+        }
+        // A keyboard that dropped off often delivers the reply when it comes
+        // back (is_ready_read; [FC] clears it, so it is this query's reply).
+        // Asking again instead was seen to make it drop off once more.
+        if (expectReply && s.readyRead) {
+          this.onNote?.('the reply arrived late: fetching it instead of asking again');
+          finished(SLOW_REST_MAX_MS * this.rxPace); // it just recovered: let it rest afterwards
+          return;
         }
         this.onNote?.('no confirmation: sending the command once more');
       }
@@ -336,15 +354,7 @@ export class Keyboard {
       await this.send(data);
       const r = await this.waitDelivered(expectReply);
       const took = Date.now() - started;
-      if (r === 'ok') {
-        if (took < SLOW_COMMAND_MS * this.rxPace) this.setSlow(false);
-        // a slow reply means the keyboard is under strain: let it rest as long
-        this.coolDown = took > SLOW_REPLY_MS * this.rxPace ? Math.min(took, SLOW_REST_MAX_MS * this.rxPace) : 0;
-        this.burst = (this.burst ?? 0) + 1;
-        this.lastDoneAt = Date.now();
-        this.done = (this.done ?? 0) + 1;
-        return;
-      }
+      if (r === 'ok') return finished(took);
       this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${took} ms`);
     }
     this.lastDoneAt = Date.now();

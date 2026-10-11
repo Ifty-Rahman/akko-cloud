@@ -565,6 +565,25 @@ test('2.4 GHz receiver: a keyboard that drops off mid-command is waited for, the
   assert.ok(notes.some((n) => /dropped off/.test(n)), notes.join(' | '));
 });
 
+test('2.4 GHz receiver: a reply delivered when the keyboard comes back is fetched, not asked for again', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const send = rx.sendFeature.bind(rx);
+  let dropped = false;
+  rx.sendFeature = async (d) => {
+    if (d[0] === 0x8f && !dropped) { // the query reaches the keyboard, which drops off before answering
+      dropped = true;
+      await send(d);
+      rx.pending = 1000;
+      setTimeout(() => { rx.pending = 0; rx.asleepPolls = 120; }, 0); // back later, reply ready
+      return;
+    }
+    return send(d);
+  };
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(rx.log.filter((c) => c === 0x8f).length, 1, 'asked only once');
+});
+
 test('2.4 GHz receiver: nothing is sent again while the keyboard stays busy', async () => {
   const rx = new FakeReceiver({ stall: true }); // busy forever after the first command
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });

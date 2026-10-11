@@ -48,108 +48,112 @@
       </div>
     </section>
 
-    <!-- Main app -->
-    <section id="appView" hidden>
-      <div class="device-strip" id="deviceStrip"></div>
-      <nav class="tabs" role="tablist" id="tabs">
-        <button role="tab" data-tab="keys" aria-selected="true">Keys</button>
-        <button role="tab" data-tab="lighting">Lighting</button>
-        <button role="tab" data-tab="macros">Macros</button>
-        <button role="tab" data-tab="settings">Settings</button>
-        <button role="tab" data-tab="backup">Backup</button>
-        <button role="tab" data-tab="keybindings">Shortcuts</button>
-        <button role="tab" data-tab="log">Debug</button>
-      </nav>
+    <!-- Main app: sidebar + content, sized to the window -->
+    <section id="appView" class="app-shell" hidden>
+      <aside class="sidebar">
+        <nav class="side-nav" role="tablist" aria-orientation="vertical" id="tabs">
+          <button role="tab" data-tab="keys" data-icon="keyboard" aria-selected="true">Keys</button>
+          <button role="tab" data-tab="lighting" data-icon="bulb">Lighting</button>
+          <button role="tab" data-tab="macros" data-icon="macro">Macros</button>
+          <button role="tab" data-tab="settings" data-icon="sliders">Settings</button>
+          <button role="tab" data-tab="backup" data-icon="archive">Backup</button>
+          <button role="tab" data-tab="keybindings" data-icon="command">Shortcuts</button>
+          <button role="tab" data-tab="log" data-icon="bug">Debug</button>
+        </nav>
+        <div class="device-strip" id="deviceStrip"></div>
+      </aside>
 
-      <div class="tab-panel" data-panel="keys">
-        <div class="toolbar">
-          <div class="seg" id="layerSeg"></div>
-          <span class="spacer"></span>
-          <span class="dirty" id="keysDirty" hidden>Unsaved changes</span>
-          <button class="ghost" id="keysReloadBtn">Reload</button>
-          <button class="ghost" id="keysDefaultsBtn">Reset layer</button>
-          <button class="primary" id="keysWriteBtn" disabled>Write to keyboard</button>
-        </div>
-        <p class="loading-note" id="keysLoading" hidden><span class="spinner small"></span>Reading the key map from your keyboard…</p>
-        <div class="kb-wrap"><div class="kb" id="kbKeys"></div></div>
-        <div class="knob-panel" id="knobPanel"></div>
-        <div class="card editor" id="keyEditor">
-          <p class="muted">Select a key above to remap it.</p>
-        </div>
-      </div>
-
-      <div class="tab-panel" data-panel="lighting" hidden>
-        <div class="card notice" id="lightHint">
-          <p><b>Keys or LED strip dark?</b> Press <kbd>Fn</kbd> + <kbd>L</kbd> on the keyboard — that switch is on the keyboard itself and the driver cannot see it. Changes made here are saved even while the lights are off.</p>
-          <button class="ghost" data-goto="keybindings">All keyboard shortcuts</button>
-        </div>
-        <div class="light-grid">
-          <div class="card" id="mainLightCard"></div>
-          <div class="card" id="logoLightCard"></div>
-        </div>
-        <div class="card" id="hostEffectCard" hidden></div>
-        <div class="card">
-          <div class="card-head">
-            <h2>Custom per-key colours</h2>
+      <div class="content">
+        <div class="tab-panel panel-keys" data-panel="keys">
+          <div class="toolbar">
+            <div class="seg" id="layerSeg"></div>
             <span class="spacer"></span>
-            <button class="ghost" id="picLoadBtn">Load from keyboard</button>
-            <button class="primary" id="picWriteBtn">Write &amp; activate</button>
+            <span class="dirty" id="keysDirty" hidden>Unsaved changes</span>
+            <button class="ghost" id="keysReloadBtn">Reload</button>
+            <button class="ghost" id="keysDefaultsBtn">Reset layer</button>
+            <button class="primary" id="keysWriteBtn" disabled>Write to keyboard</button>
           </div>
-          <div class="paint-tools">
-            <span class="brush-pick">Brush <label class="colour-box" id="brushBox" title="Choose brush colour" style="background:#5b8cff"><input type="color" id="brushColor" value="#5b8cff" aria-label="Brush colour"></label></span>
-            <button class="ghost" id="picFillBtn">Fill all</button>
-            <button class="ghost" id="picClearBtn">Clear</button>
-            <span class="muted">Click or drag across keys to paint.</span>
+          <p class="loading-note" id="keysLoading" hidden><span class="spinner small"></span>Reading the key map from your keyboard…</p>
+          <div class="kb-area">
+            <div class="kb-wrap"><div class="kb" id="kbKeys"></div></div>
+            <div class="knob-panel" id="knobPanel"></div>
           </div>
-          <div class="kb-wrap"><div class="kb paint" id="kbPaint"></div></div>
+          <div class="card editor" id="keyEditor">
+            <p class="muted">Select a key above to remap it.</p>
+          </div>
         </div>
-      </div>
 
-      <div class="tab-panel" data-panel="macros" hidden>
-        <div class="macro-layout">
-          <div class="card macro-lib" id="macroLib"></div>
-          <div class="card macro-edit" id="macroEdit"></div>
-        </div>
-      </div>
-
-      <div class="tab-panel" data-panel="settings" hidden>
-        <div class="settings-grid" id="settingsGrid"></div>
-      </div>
-
-      <div class="tab-panel" data-panel="backup" hidden>
-        <div class="card">
-          <h2>Backup &amp; restore</h2>
-          <p>Save every profile (key maps, Fn layers, lighting, options) plus the macros your keys use to a file, and restore it later or on another PC75B.</p>
-          <div class="row">
-            <button class="primary" id="exportBtn">Export backup</button>
-            <label class="button">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>
+        <div class="tab-panel panel-lighting" data-panel="lighting" hidden>
+          <div class="light-col">
+            <div class="card" id="mainLightCard"></div>
+            <div class="card" id="logoLightCard"></div>
+            <div class="card" id="hostEffectCard" hidden></div>
           </div>
-          <p class="muted" id="backupStatus"></p>
-        </div>
-      </div>
-
-      <div class="tab-panel" data-panel="keybindings" hidden>
-        <div class="card">
-          <div class="card-head">
-            <h2>Keyboard shortcuts</h2>
-            <span class="spacer"></span>
-            <input type="search" id="kbFilter" placeholder="Search shortcuts…" aria-label="Search shortcuts">
+          <div class="card paint-card">
+            <div class="card-head">
+              <h2>Custom per-key colours</h2>
+              <span class="spacer"></span>
+              <button class="ghost" id="picLoadBtn">Load from keyboard</button>
+              <button class="primary" id="picWriteBtn">Write &amp; activate</button>
+            </div>
+            <div class="paint-tools">
+              <span class="brush-pick">Brush <label class="colour-box" id="brushBox" title="Choose brush colour" style="background:#5b8cff"><input type="color" id="brushColor" value="#5b8cff" aria-label="Brush colour"></label></span>
+              <button class="ghost" id="picFillBtn">Fill all</button>
+              <button class="ghost" id="picClearBtn">Clear</button>
+              <span class="muted small">Click or drag across keys to paint.</span>
+            </div>
+            <div class="paint-area"><div class="kb paint" id="kbPaint"></div></div>
+            <p class="light-hint muted small" id="lightHint"><b>Keys or LED strip dark?</b> Press <kbd>Fn</kbd> + <kbd>L</kbd> on the keyboard; the driver can’t see that switch. Changes are saved even while the lights are off. <button type="button" class="linkish" data-goto="keybindings">All keyboard shortcuts</button></p>
           </div>
-          <p class="muted small">Built into the PC75B — they work without any driver. From the Akko PC75B manual.</p>
-          <div class="kb-sections" id="keybindingsList"></div>
         </div>
-      </div>
 
-      <div class="tab-panel" data-panel="log" hidden>
-        <div class="card">
-          <div class="card-head">
-            <h2>Debug log</h2>
-            <span class="spacer"></span>
-            <button class="ghost" id="logClearBtn">Clear</button>
-            <button id="logDownloadBtn">Download log</button>
+        <div class="tab-panel panel-macros" data-panel="macros" hidden>
+          <div class="macro-layout">
+            <div class="card macro-lib" id="macroLib"></div>
+            <div class="card macro-edit" id="macroEdit"></div>
           </div>
-          <p class="muted small">The last 3000 packets exchanged with the keyboard, with notes on what the app was doing. If something goes wrong, download this file and send it along with your report. It stays in this tab only.</p>
-          <pre class="log" id="logOut"></pre>
+        </div>
+
+        <div class="tab-panel panel-settings" data-panel="settings" hidden>
+          <div class="settings-grid" id="settingsGrid"></div>
+        </div>
+
+        <div class="tab-panel panel-backup" data-panel="backup" hidden>
+          <div class="card">
+            <h2>Backup &amp; restore</h2>
+            <p>Save every profile (key maps, Fn layers, lighting, options) plus the macros your keys use to a file, and restore it later or on another PC75B.</p>
+            <div class="row">
+              <button class="primary" id="exportBtn">Export backup</button>
+              <label class="button">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>
+            </div>
+            <p class="muted" id="backupStatus"></p>
+          </div>
+        </div>
+
+        <div class="tab-panel panel-fill" data-panel="keybindings" hidden>
+          <div class="card fill-card">
+            <div class="card-head">
+              <h2>Keyboard shortcuts</h2>
+              <span class="muted small">Built into the PC75B; they work without any driver. From the Akko PC75B manual.</span>
+              <span class="spacer"></span>
+              <input type="search" id="kbFilter" placeholder="Search shortcuts…" aria-label="Search shortcuts">
+            </div>
+            <div class="kb-sections scroll-gutter" id="keybindingsList"></div>
+          </div>
+        </div>
+
+        <div class="tab-panel panel-fill" data-panel="log" hidden>
+          <div class="card fill-card">
+            <div class="card-head">
+              <h2>Debug log</h2>
+              <span class="spacer"></span>
+              <label class="switch"><input type="checkbox" id="logToggle"><span>Record packets</span></label>
+              <button class="ghost" id="logClearBtn">Clear</button>
+              <button id="logDownloadBtn">Download log</button>
+            </div>
+            <p class="muted small">For troubleshooting: turn on <b>Record packets</b>, reproduce the problem, then download the log and send it along with your report. It keeps the last 3000 packets, with notes on what the app was doing, in this tab only.</p>
+            <pre class="log" id="logOut"></pre>
+          </div>
         </div>
       </div>
     </section>

@@ -80,7 +80,7 @@ const S = {
   pic: new Uint8Array(384),
   pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
-  logging: true, // always on: the last LOG_MAX packets, for troubleshooting
+  logging: false, // the user turns recording on in the Debug tab
   logLines: [],
   music: undefined,
   screen: undefined,
@@ -276,7 +276,10 @@ async function switchProfile(p) {
 
 // ------------------------------------------------------------------ tabs
 const currentTab = () => $('#tabs [aria-selected="true"]').dataset.tab;
-$$('#tabs button').forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.tab)));
+$$('#tabs button').forEach((b) => {
+  b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon, 'nav-ic'));
+  b.addEventListener('click', () => selectTab(b.dataset.tab));
+});
 function selectTab(name) {
   $$('#tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
   $$('.tab-panel').forEach((p) => (p.hidden = p.dataset.panel !== name));
@@ -597,9 +600,10 @@ function renderEditor() {
   const body = h('div', { class: 'grid' });
   let read = () => ({ type: 'disabled' });
 
+  const typeField = h('label', { class: 'field' }, h('span', {}, 'Action type'), typeSel);
   function build() {
     const t = typeSel.value;
-    body.replaceChildren();
+    body.replaceChildren(typeField); // same row as the action's own fields
     if (t === 'key') {
       const sel = h('select', {}, hidOptions(cur.type === 'key' ? cur.hid : 4));
       body.append(h('label', { class: 'field' }, h('span', {}, 'Key'), sel), h('div', { class: 'field' }, h('span', {}, 'or'), captureButton((hid) => (sel.value = hid))));
@@ -693,8 +697,6 @@ function renderEditor() {
   ed.replaceChildren(
     h('div', { class: 'editor-head' }, h('h2', {}, slotName(idx)),
       h('span', { class: 'now' }, 'currently: ', h('b', {}, fnDefault ? 'built-in Fn function' : actionText(cur)))),
-    h('div', { class: 'grid' }, h('label', { class: 'field' }, h('span', {}, 'Action type'), typeSel)),
-    h('div', { style: 'height:12px' }),
     body,
     h('div', { class: 'editor-actions' },
       h('button', { class: 'primary', onclick: apply }, 'Apply to key'),
@@ -1223,8 +1225,27 @@ function renderKeybindings() {
         h('span', { class: 'combo' }, keys.flatMap((k, i) => (i ? ['+', h('kbd', {}, k)] : [h('kbd', {}, k)]))),
         h('span', {}, what)))));
   }
-  $('#keybindingsList').replaceChildren(...(out.length ? out : [h('p', { class: 'muted' }, 'No shortcut matches your search.')]));
+  const list = $('#keybindingsList');
+  if (!out.length) {
+    list.replaceChildren(h('p', { class: 'muted' }, 'No shortcut matches your search.'));
+    return;
+  }
+  // masonry: as many columns as fit, each section whole in the shortest column
+  const n = Math.max(1, Math.min(4, Math.floor((list.clientWidth || 960) / 320)));
+  const cols = Array.from({ length: n }, () => ({ el: h('div', { class: 'kb-col' }), size: 0 }));
+  out.forEach((sec, i) => {
+    const col = cols.reduce((a, b) => (b.size < a.size ? b : a));
+    col.el.append(sec);
+    col.size += 2 + sec.querySelectorAll('.kb-row').length + (sec.querySelector('.note') ? 1.5 : 0) + i * 0.001;
+  });
+  list.style.setProperty('--cols', n);
+  list.replaceChildren(...cols.map((c) => c.el));
 }
+let kbResizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(kbResizeTimer);
+  kbResizeTimer = setTimeout(() => { if (currentTab() === 'keybindings') renderKeybindings(); }, 150);
+});
 $('#kbFilter').addEventListener('input', renderKeybindings);
 document.addEventListener('click', (e) => {
   const go = e.target.closest?.('[data-goto]');
@@ -1248,9 +1269,15 @@ function logNote(text) {
 }
 function renderLog() {
   const out = $('#logOut');
-  out.textContent = S.logLines.slice(-400).join('\n') || 'Waiting for traffic…';
+  out.textContent = S.logLines.slice(-400).join('\n') || (S.logging ? 'Recording… waiting for traffic.' : 'Turn on “Record packets” to start recording.');
   out.scrollTop = out.scrollHeight;
 }
+$('#logToggle').addEventListener('change', (e) => {
+  if (!e.target.checked) logNote('recording stopped');
+  S.logging = e.target.checked;
+  if (S.logging) logNote('recording started');
+  renderLog();
+});
 $('#logClearBtn').addEventListener('click', () => { S.logLines = []; renderLog(); });
 function downloadLog() {
   const head = [

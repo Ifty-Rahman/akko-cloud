@@ -379,3 +379,117 @@ button.linkish:hover { filter: brightness(1.15); }
   #deviceName, .device-summary .dot { display: none; }
   .device-summary { margin-left: 0; }
 }
+
+/* ===================================================================
+   Desktop shell (laptops and monitors): the page is exactly the window;
+   a left sidebar holds the tabs, each tab is sized to the space left, and
+   only long lists (shortcuts, log, macro steps) scroll inside their card.
+   =================================================================== */
+html, body { height: 100%; }
+body { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.topbar { position: relative; padding: 8px 20px; }
+main { max-width: none; margin: 0; padding: 0; min-height: 0; overflow: auto; }
+.connect { max-width: 1180px; margin: 0 auto; padding: 32px 20px; }
+#deviceName, .device-summary .dot { display: none; }
+
+.app-shell { height: 100%; min-height: 0; display: grid; grid-template-columns: 210px minmax(0, 1fr); }
+.sidebar { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 14px 10px; background: var(--panel); border-right: 1px solid var(--line); }
+.side-nav { display: flex; flex-direction: column; gap: 2px; }
+.side-nav button { justify-content: flex-start; gap: 11px; width: 100%; border: none; background: transparent; color: var(--muted); padding: 9px 12px; min-height: 40px; border-radius: 8px; font-weight: 500; }
+.side-nav button:hover { background: var(--panel-2); color: var(--text); }
+.side-nav button[aria-selected='true'] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nav-ic { width: 18px; height: 18px; flex: none; }
+.sidebar .device-strip { margin: auto 0 0; display: grid; gap: 7px; justify-content: stretch; font-size: 0.8rem; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.sidebar .device-strip span { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
+.sidebar .device-strip b { text-align: right; }
+
+.content { min-width: 0; min-height: 0; overflow: auto; padding: 16px 20px; }
+.tab-panel { height: 100%; min-height: 0; }
+.content .card { margin-bottom: 0; }
+
+/* Keys: toolbar, keyboard (sized to the space), knob, editor */
+.panel-keys { display: flex; flex-direction: column; gap: 10px; }
+.panel-keys .toolbar, .panel-keys .loading-note { margin: 0; flex: none; }
+.kb-area { flex: 1 1 0; min-height: 170px; container-type: size; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.kb-area .kb-wrap { overflow: visible; padding: 0; }
+.kb-area .kb { --u: min(calc((100cqw - 4px) / 16.3), calc((100cqh - 54px) / 6.3), 80px); margin: 0 auto; }
+.kb-area .knob-panel { margin: 0; flex: none; }
+.panel-keys .editor { flex: none; max-height: 44%; overflow: auto; padding: 14px 18px; }
+.panel-keys .editor .grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.panel-keys .editor-head { margin-bottom: 8px; }
+.panel-keys .editor-actions { margin-top: 10px; }
+
+/* Lighting: effect cards on the left, per-key painter filling the rest */
+.panel-lighting { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 16px; }
+.light-col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+.light-col .card { padding: 14px 16px; }
+.light-col .card-head { margin-bottom: 8px; }
+.light-col .form { gap: 10px; }
+.light-col .field { flex-direction: row; align-items: center; gap: 10px; }
+.light-col .field > span { flex: 0 0 92px; }
+.light-col .field select, .light-col .field input[type='range'] { flex: 1; width: auto; min-width: 0; }
+.paint-card { min-height: 0; display: flex; flex-direction: column; }
+.paint-card .paint-tools { margin-bottom: 8px; }
+.paint-area { flex: 1 1 0; min-height: 110px; container-type: size; display: flex; align-items: center; justify-content: center; }
+.paint-area .kb { --u: min(calc((100cqw - 4px) / 16.3), calc((100cqh - 4px) / 6.3), 72px); margin: 0; }
+.light-hint { margin: 8px 0 0; flex: none; }
+.light-hint kbd { font-size: 0.75rem; }
+
+/* Settings: fixed columns. Cards: 1 Performance, 2 Keyboard options,
+   3 Wireless power saving, 4 Maintenance. Laptops: two columns; wide: three. */
+.panel-settings .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto auto 1fr; gap: 14px; align-items: start; }
+.panel-settings .settings-grid .card { padding: 14px 18px; }
+.panel-settings .settings-grid .card h2 { margin-bottom: 8px; }
+.panel-settings .settings-grid > :nth-child(1) { grid-column: 1; grid-row: 1; }
+.panel-settings .settings-grid > :nth-child(2) { grid-column: 1; grid-row: 2; }
+.panel-settings .settings-grid > :nth-child(3) { grid-column: 2; grid-row: 1 / span 3; }
+.panel-settings .settings-grid > :nth-child(4) { grid-column: 1; grid-row: 3; }
+@media (min-width: 1300px) {
+  .panel-settings .settings-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: auto 1fr; }
+  .panel-settings .settings-grid > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .panel-settings .settings-grid > :nth-child(4) { grid-column: 1; grid-row: 2; }
+  .panel-settings .settings-grid > :nth-child(2) { grid-column: 2; grid-row: 1 / span 2; }
+  .panel-settings .settings-grid > :nth-child(3) { grid-column: 3; grid-row: 1 / span 2; }
+}
+
+/* Macros: library and editor fill the height; the steps scroll inside */
+.panel-macros .macro-layout { height: 100%; }
+.panel-macros .macro-lib { min-height: 0; }
+.panel-macros .lib-list { max-height: none; min-height: 0; }
+.panel-macros .macro-edit { min-height: 0; overflow: hidden; }
+.panel-macros .mtiles { flex: 1 1 0; min-height: 110px; max-height: none; }
+
+/* Shortcuts and Debug: one card filling the panel, the list scrolls inside */
+.panel-fill { display: flex; flex-direction: column; }
+.fill-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fill-card .card-head .muted { flex: 1 1 260px; }
+.kb-sections { display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); gap: 14px; align-items: start; flex: 1; min-height: 0; overflow-y: auto; margin-top: 4px; padding-right: 4px; }
+.kb-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.fill-card .log { flex: 1; min-height: 0; max-height: none; }
+.panel-backup .card { max-width: 760px; }
+
+/* Footer: the whole browser width */
+.site-footer { width: 100%; max-width: none; margin: 0; padding: 8px 20px; border-top: 1px solid var(--line); background: var(--panel); font-size: 0.8rem; }
+
+/* Narrow screens: a normal scrolling page with the tabs across the top */
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  body { height: auto; overflow: visible; display: flex; flex-direction: column; min-height: 100vh; }
+  main { overflow: visible; flex: 1 0 auto; }
+  .app-shell { display: block; height: auto; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--line); padding: 8px 12px; }
+  .side-nav { flex-direction: row; overflow-x: auto; }
+  .side-nav button { width: auto; flex: none; }
+  .sidebar .device-strip { margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .content { overflow: visible; padding: 14px 12px; }
+  .tab-panel { height: auto; }
+  .kb-area, .paint-area { container-type: inline-size; flex: none; min-height: 0; }
+  .kb-area .kb, .paint-area .kb { --u: clamp(18px, calc((100cqw - 4px) / 16.3), 56px); }
+  .panel-keys .editor { max-height: none; }
+  .panel-lighting, .panel-settings .settings-grid { grid-template-columns: 1fr; }
+  .panel-settings .settings-grid > * { grid-column: auto !important; grid-row: auto !important; }
+  .light-col { overflow: visible; }
+  .panel-macros .macro-layout { height: auto; }
+  .fill-card .log, .kb-sections { max-height: 70vh; }
+  .kb-sections { grid-template-columns: 1fr; }
+}

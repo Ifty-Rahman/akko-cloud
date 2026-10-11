@@ -55,6 +55,7 @@ const RX_MAX_POLLS = 15; // the helper's wait_fb_write_finish / read_msg give up
 const RX_EXTRA_POLLS = 8; // then a slow keyboard gets ~4 s more (only waiting, nothing is sent)
 const RX_EXTRA_POLL_MS = 500;
 const RX_LOOP_MS = 5000; // the helper's background status loop
+const RX_PAGE_GAP_MS = 400; // pause between pages of a paged read over the receiver
 const KEEP_ALIVE_MS = 30000; // optional keep-alive query (Settings); lights-off can be as short as 1 min
 // macOS (see send / rxRequest / read): the receiver needs these small gaps
 const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before reading a reply
@@ -750,9 +751,15 @@ export class Keyboard {
   // Like the official app (_getKeyMatrix, _getFnKeyMatrix, getMacro,
   // _getLightPic): each page is asked for once. The receiver sequence waits
   // 30 ms before reading a fetched reply, which is what keeps replies whole.
+  // Over the receiver a short pause separates the pages: reading them back to
+  // back was seen to slow the keyboard until it dropped off (the user prefers
+  // slower and steady). Each page still follows the official sequence.
   async readPaged(cmd, index, pages) {
     const out = new Uint8Array(pages * 64);
-    for (let p = 0; p < pages; p++) out.set(await this.query([cmd, index, p]), p * 64);
+    for (let p = 0; p < pages; p++) {
+      if (p && this.dongle) await this.rxPoll(RX_PAGE_GAP_MS);
+      out.set(await this.query([cmd, index, p]), p * 64);
+    }
     return out;
   }
 

@@ -52,15 +52,15 @@ function toast(msg, error = false) {
 // bar follows the commands the keyboard has completed (kb.done). fn may raise
 // the estimate as it learns more: fn({ steps }) -> p.steps = n.
 // steps: commands the operation sends (progress bar with percentage), or
-// 'wave' for a keycap light wave instead (connecting, where a count means little).
+// 'spinner' for a spinning ring instead (connecting, where a count means little).
 async function busy(text, fn, steps = 0) {
   const kb = S.kb;
   const start = kb?.done ?? 0;
-  const wave = steps === 'wave';
-  const p = { steps: wave ? 0 : steps };
+  const spinner = steps === 'spinner';
+  const p = { steps: spinner ? 0 : steps };
   const label = text.replace(/…$/, '');
   $('#busyText').textContent = label;
-  $('#busy').classList.toggle('wave', wave);
+  $('#busy').classList.toggle('ring', spinner);
   setBusyBar(p.steps ? 0 : null);
   $('#busy').hidden = false;
   busyDepth++; // an operation started from inside another keeps the overlay up
@@ -82,8 +82,7 @@ async function busy(text, fn, steps = 0) {
   }
 }
 let busyDepth = 0;
-// Keycap grids whose lights sweep across in a rainbow wave (connect page art
-// and the connecting overlay). Pure CSS animation, staggered per key.
+// Keycap grid whose lights sweep across in a rainbow wave (connect page art). Pure CSS animation, staggered per key.
 function buildWaveKeyboards() {
   for (const el of $$('.wave-kb')) {
     const rows = Number(el.dataset.rows), cols = Number(el.dataset.cols);
@@ -227,7 +226,7 @@ async function connect(transport) {
       disconnect();
     });
     showApp();
-  }, 'wave');
+  }, 'spinner');
   const kb = S.kb;
   if (!kb) {
     $('#connectLogRow').hidden = !S.logLines.length; // connect failed: offer the log
@@ -909,7 +908,7 @@ function renderLightCard(card, title, types, state, onApply) {
   card.replaceChildren(
     h('div', { class: 'card-head' }, h('h2', {}, title)),
     h('div', { class: 'form' }, h('label', { class: 'field' }, h('span', {}, 'Effect'), typeSel), area,
-      h('div', {}, h('button', { class: 'primary', onclick: () => busy('Setting lights', async () => { await onApply({ ...draft }); toast(`${title} updated`); }, 1) }, 'Apply'))),
+      h('div', { class: 'light-apply' }, h('button', { class: 'primary', onclick: () => busy('Setting lights', async () => { await onApply({ ...draft }); toast(`${title} updated`); }, 1) }, 'Apply'))),
   );
 }
 

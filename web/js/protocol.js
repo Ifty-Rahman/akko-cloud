@@ -65,7 +65,6 @@ const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyb
 const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
 const NOT_ANSWERED = 'The keyboard did not answer over the 2.4 GHz receiver. Press any key on it and try again, or use the USB cable.';
 const NOT_CONFIRMED = 'The keyboard did not confirm the change over the 2.4 GHz receiver. Press any key on it and try again, or use the USB cable.';
-const INCONSISTENT_REPLY = 'The keyboard’s replies over the 2.4 GHz receiver did not agree, so nothing was changed. Try again, or use the USB cable.';
 
 const MAXSPEED = 4;
 // Colour-mode nibble (low 4 bits of the option byte). The vendor driver uses
@@ -88,14 +87,6 @@ export class KeyboardAsleepError extends Error {
   constructor() {
     super('The keyboard is not answering. Press any key on it; if its green LED keeps blinking, switch it off and on again.');
     this.name = 'KeyboardAsleepError';
-  }
-}
-
-export class IncompleteWriteError extends Error {
-  constructor(what, cause) {
-    super(`Writing the ${what} did not finish${cause ? ` (${cause.message.replace(/\.$/, '')})` : ''}. Some keys may not work until it is written again. Your changes are kept: press “Write to keyboard” again, ideally over the USB cable.`);
-    this.name = 'IncompleteWriteError';
-    this.cause = cause;
   }
 }
 
@@ -729,37 +720,13 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- key matrices
-  // Over the receiver a reply is occasionally wrong although the receiver
-  // reported it ready: a 16-byte block missing (zeros) or another page's data.
-  // Seen on a PC75B Plus+: keys 12-15 of a key-map read came back as 0 and
-  // were shown as disabled. Each page is therefore checked against `ref` (the
-  // last known contents, e.g. the cached map or the data just written): a page
-  // that matches is accepted, a page that differs is read again and accepted
-  // once two reads agree. Without `ref` every page is read twice.
-  async readPaged(cmd, index, pages, ref) {
+  // Like the official app (_getKeyMatrix, _getFnKeyMatrix, getMacro,
+  // _getLightPic): each page is asked for once. The receiver sequence waits
+  // 30 ms before reading a fetched reply, which is what keeps replies whole.
+  async readPaged(cmd, index, pages) {
     const out = new Uint8Array(pages * 64);
-    if (ref) {
-      const full = new Uint8Array(pages * 64); // model maps can be shorter than the pages read
-      full.set(Array.from(ref).slice(0, pages * 64));
-      ref = full;
-    }
-    for (let p = 0; p < pages; p++) out.set(await this.readPage(cmd, index, p, ref?.subarray(p * 64, p * 64 + 64)), p * 64);
+    for (let p = 0; p < pages; p++) out.set(await this.query([cmd, index, p]), p * 64);
     return out;
-  }
-
-  async readPage(cmd, index, p, want) {
-    const q = () => this.query([cmd, index, p]);
-    let page = await q();
-    if (this.dongle && !(want && sameBytes(page, want))) {
-      for (let n = 0; ; n++) {
-        const again = await q();
-        if (sameBytes(again, page)) break; // the same twice
-        page = again;
-        if (want && sameBytes(page, want)) break; // matches what we expected
-        if (n >= 2) throw new Error(INCONSISTENT_REPLY);
-      }
-    }
-    return page;
   }
 
   async writePaged(cmd, index, data, pages, gap) {
@@ -771,43 +738,16 @@ export class Keyboard {
     await sleep(gap);
   }
 
-  getKeyMatrix(profile = this.profile, ref) {
-    return this.exclusive(() => this.readPaged(CMD.GET_KEYMATRIX, profile, 8, ref));
+  getKeyMatrix(profile = this.profile) {
+    return this.exclusive(() => this.readPaged(CMD.GET_KEYMATRIX, profile, 8));
   }
 
   setKeyMatrix(matrix512, profile = this.profile) {
     return this.exclusive(() => this.writePaged(CMD.SET_KEYMATRIX, profile, matrix512, 9, 1000));
   }
 
-  // Write, read back and compare. A paged upload that was cut off part way
-  // (link drop) or did not store correctly is redone in full once: a partial
-  // upload leaves the keys of the missing pages disabled.
-  async verifiedWrite(write, read, data, what, n = 9 * 56 /* bytes the paged upload carries */) {
-    let interrupted;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await write();
-        const back = await read();
-        if (data.slice(0, n).every((v, i) => v === back[i])) return attempt;
-        interrupted = undefined;
-      } catch (e) {
-        interrupted = e;
-        if (e instanceof KeyboardAsleepError) break; // nobody pressed a key for a minute
-      }
-    }
-    throw new IncompleteWriteError(what, interrupted);
-  }
-
-  setKeyMatrixVerified(matrix512, profile = this.profile) {
-    return this.verifiedWrite(() => this.setKeyMatrix(matrix512, profile), () => this.getKeyMatrix(profile, matrix512), matrix512, 'key map');
-  }
-
-  setFnMatrixVerified(matrix512, fnIndex) {
-    return this.verifiedWrite(() => this.setFnMatrix(matrix512, fnIndex), () => this.getFnMatrix(fnIndex, matrix512), matrix512, 'Fn layer');
-  }
-
-  getFnMatrix(fnIndex, ref) {
-    return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8, ref));
+  getFnMatrix(fnIndex) {
+    return this.exclusive(() => this.readPaged(CMD.GET_FNMATRIX, fnIndex, 8));
   }
 
   setFnMatrix(matrix512, fnIndex) {
@@ -815,29 +755,9 @@ export class Keyboard {
   }
 
   // ---------------------------------------------------------- macros
-  getMacroRaw(index, ref) {
-    return this.exclusive(() => this.readPaged(CMD.GET_MACRO, index, 4, ref));
-  }
-
-  // First page only: enough to tell whether a slot holds a macro.
-  // Reads only as many pages as the macro uses: it ends in the page whose last
-  // 16 bytes are zero (a valid macro never has 16 zero bytes in a row). Most
-  // macros fit in the first page, so this is 1 page instead of 4.
+  // Like the official getMacro: all 4 pages, each asked for once.
   getMacro(index) {
-    return this.exclusive(async () => {
-      const out = new Uint8Array(256);
-      for (let p = 0; p < 4; p++) {
-        const page = await this.readPage(CMD.GET_MACRO, index, p);
-        out.set(page, p * 64);
-        if (page.subarray(48).every((b) => b === 0)) break;
-      }
-      return decodeMacro(out);
-    });
-  }
-
-  setMacroVerified(index, events, repeatCount = 1) {
-    const buf = encodeMacro(events, repeatCount);
-    return this.verifiedWrite(() => this.setMacro(index, events, repeatCount), () => this.getMacroRaw(index, buf), buf, 'macro', buf.length);
+    return this.exclusive(async () => decodeMacro(await this.readPaged(CMD.GET_MACRO, index, 4)));
   }
 
   setMacro(index, events, repeatCount = 1) {

@@ -467,9 +467,7 @@ async function readLayer({ force = false } = {}) {
   renderKeys();
   renderEditor();
   try {
-    // pages matching the last known map are accepted at once; others are read
-    // again until two reads agree (see readPaged)
-    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile, base) : await S.kb.getFnMatrix(layerIndex(), base);
+    const m = S.layer === 'base' ? await S.kb.getKeyMatrix(S.profile) : await S.kb.getFnMatrix(layerIndex());
     if (token !== S.keysToken) return; // a newer load replaced this one
     const merged = Uint8Array.from(m);
     let edits = 0;
@@ -788,7 +786,7 @@ $('#keysWriteBtn').addEventListener('click', () => busy('Setting keys', async (p
   const used = new Set();
   for (let i = 0; i < 128; i++) if (S.work[i * 4] === 9) used.add(S.work[i * 4 + 2]);
   const toWrite = [...used].sort((a, b) => a - b).filter((x) => libMacro(macroIdOnSlot(x)));
-  p.steps = toWrite.length * 9 + 17; // macro: 5 pages + 4 read back; key map: 9 + 8 read back
+  p.steps = toWrite.length * 5 + 9; // macro: 5 pages; key map: 9 pages (no read-back, like the official app)
   for (const s of toWrite) {
     const id = macroIdOnSlot(s);
     const m = libMacro(id);
@@ -802,8 +800,8 @@ $('#keysWriteBtn').addEventListener('click', () => busy('Setting keys', async (p
   }
   const target = `${S.layer}:${layerIndex()}`;
   try {
-    if (S.layer === 'base') await S.kb.setKeyMatrixVerified(S.work, S.profile);
-    else await S.kb.setFnMatrixVerified(S.work, layerIndex());
+    if (S.layer === 'base') await S.kb.setKeyMatrix(S.work, S.profile);
+    else await S.kb.setFnMatrix(S.work, layerIndex());
   } catch (e) {
     S.writeInterrupted = target; // the keyboard may hold a partial map: keep Write enabled
     updateDirty();
@@ -1030,7 +1028,7 @@ const slotMap = () => loadSlotMap(deviceKey());
 async function writeMacroToKeyboard(m, slotIndex) {
   const err = validateMacro(m.events);
   if (err) throw new Error(`“${m.name}”: ${err}`);
-  await S.kb.setMacroVerified(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
+  await S.kb.setMacro(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
 }
 
 // Once per connection, when the Macros tab is opened: macros that keys use but
@@ -1039,7 +1037,7 @@ async function syncKeyboardMacros() {
   if (!S.kb || S.macrosSynced) return;
   S.macrosSynced = true;
   const ok = await busy('Loading macros', async (p) => {
-    const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => (p.steps = n * 2));
+    const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => (p.steps = n * 4));
     if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
     return true;
   });
@@ -1124,7 +1122,7 @@ async function copyMacroToLibrary(s, mode) {
     toast(`Added “${item.name}” to your macro library`);
     renderKeys();
     renderEditor();
-  }, 2);
+  }, 4);
 }
 
 // ================================================================== SETTINGS
@@ -1218,22 +1216,17 @@ async function loadSettings() {
 // ================================================================== BACKUP
 $('#exportBtn').addEventListener('click', () => busy('Exporting backup', async (p) => {
   const kb = S.kb;
-  // A page that matches the saved copy is read once, any other page twice.
-  const saved = [
-    ...Array.from({ length: S.model.profiles }, (_, i) => savedMatrix('base', i)),
-    ...Array.from({ length: S.model.fnLayers }, (_, i) => savedMatrix(`fn${i}`, i)),
-  ];
-  p.steps = saved.reduce((n, m) => n + (m ? 8 : 16), 0) + 14;
+  p.steps = (S.model.profiles + S.model.fnLayers) * 8 + 14;
   const data = { format: 'akko-web-driver/1', model: S.model.name, id: S.id, created: new Date().toISOString(), profiles: [], fn: [], macros: {} };
   const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
   const macroIdx = new Set();
   for (let p = 0; p < S.model.profiles; p++) {
-    const m = await kb.getKeyMatrix(p, saved[p]);
+    const m = await kb.getKeyMatrix(p);
     for (let i = 0; i < 128; i++) if (m[i * 4] === 9) macroIdx.add(m[i * 4 + 2]);
     data.profiles.push({ matrix: hex(m) });
   }
   for (let f = 0; f < S.model.fnLayers; f++) {
-    const m = await kb.getFnMatrix(f, saved[S.model.profiles + f]);
+    const m = await kb.getFnMatrix(f);
     for (let i = 0; i < 128; i++) if (m[i * 4] === 9) macroIdx.add(m[i * 4 + 2]);
     data.fn.push(hex(m));
   }
@@ -1269,12 +1262,12 @@ $('#importFile').addEventListener('change', async (e) => {
   if (!confirm(`Restore backup from ${data.created}? This overwrites all key maps, macros and the current lighting.`)) return;
   const unhex = (s) => Uint8Array.from(s.match(/../g), (x) => parseInt(x, 16));
   await busy('Restoring backup', async (p) => {
-    p.steps = (Math.min(data.profiles.length, S.model.profiles) + Math.min(data.fn.length, S.model.fnLayers)) * 17 + Object.keys(data.macros || {}).length * 9 + 15;
+    p.steps = (Math.min(data.profiles.length, S.model.profiles) + Math.min(data.fn.length, S.model.fnLayers)) * 9 + Object.keys(data.macros || {}).length * 5 + 15;
     const kb = S.kb;
     forgetSavedMatrices();
-    for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrixVerified(unhex(data.profiles[p].matrix), p);
-    for (let f = 0; f < Math.min(data.fn.length, S.model.fnLayers); f++) await kb.setFnMatrixVerified(unhex(data.fn[f]), f);
-    if (!kb.dongle) for (const [i, m] of Object.entries(data.macros)) await kb.setMacroVerified(Number(i), m.events, m.repeatCount || 1);
+    for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrix(unhex(data.profiles[p].matrix), p);
+    for (let f = 0; f < Math.min(data.fn.length, S.model.fnLayers); f++) await kb.setFnMatrix(unhex(data.fn[f]), f);
+    if (!kb.dongle) for (const [i, m] of Object.entries(data.macros)) await kb.setMacro(Number(i), m.events, m.repeatCount || 1);
     const c = data.current;
     if (c) {
       await kb.setProfile(c.profile ?? 0);

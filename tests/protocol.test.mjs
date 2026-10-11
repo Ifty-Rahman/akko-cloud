@@ -333,139 +333,28 @@ test('colour mode codes: PC75B Plus+ uses 7 = rainbow, 8 = solid; others keep ve
   assert.equal(Keyboard.encodeLight(7, { type: 'LightAlwaysOn', value: 4, rgb: 1, dazzle: true }, true)[4] & 15, 8);
 });
 
-test('verified key-map write: rewrites once when the keyboard did not store it, errors after that', async () => {
-  const { t, kb } = setup();
-  const m = Uint8Array.from(MODELS[0].matrix);
-  m.set([3, 0, 111, 0], 48 * 4);
-  assert.equal(await kb.setKeyMatrixVerified(m, 0), 0); // stored first time
-  // drop the first page once (simulates a link hiccup mid-write)
-  const real = t.sendFeature.bind(t);
-  let dropped = false;
-  t.sendFeature = async (d) => { if (d[0] === CMD.SET_KEYMATRIX && d[4] === 0 && !dropped) { dropped = true; return; } return real(d); };
-  m.set([0, 0, 57, 0], 0);
-  assert.equal(await kb.setKeyMatrixVerified(m, 0), 1); // needed one rewrite
-  assert.deepEqual(Array.from(t.matrices[0].slice(0, 4)), [0, 0, 57, 0]);
-  // keyboard never stores it -> clear error
-  t.sendFeature = async (d) => (d[0] === CMD.SET_KEYMATRIX ? undefined : real(d));
-  m.set([0, 0, 58, 0], 0);
-  await assert.rejects(kb.setKeyMatrixVerified(m, 0), /key map did not finish/);
-});
-
-test('verified write: an upload cut off part way is redone in full', async () => {
-  const kb = new Keyboard(new DemoTransport(MODELS[1]));
-  const m = Uint8Array.from(MODELS[1].matrix);
-  m.set([9, 0, 19, 0], 50 * 4);
-  const real = kb.setKeyMatrix.bind(kb);
-  let calls = 0;
-  kb.setKeyMatrix = async (data, p) => {
-    if (++calls === 1) {
-      await kb.writePaged(0x09, p, data.slice(0, 112), 2, 0); // only 2 of 9 pages arrive
-      throw new Error('link dropped');
-    }
-    return real(data, p);
-  };
-  assert.equal(await kb.setKeyMatrixVerified(m, 0), 1);
-  assert.equal(calls, 2);
-  assert.deepEqual(Array.from((await kb.getKeyMatrix(0)).slice(50 * 4, 50 * 4 + 4)), [9, 0, 19, 0]);
-});
-
-test('verified write: still incomplete after the retry -> IncompleteWriteError', async () => {
-  const { IncompleteWriteError } = await import('../web/js/protocol.js');
-  const kb = new Keyboard(new DemoTransport(MODELS[1]));
-  kb.setKeyMatrix = async () => { throw new Error('link dropped'); };
-  await assert.rejects(kb.setKeyMatrixVerified(Uint8Array.from(MODELS[1].matrix), 0), (e) => e instanceof IncompleteWriteError && /Write to keyboard/.test(e.message));
-});
-
-test('macro writes are read back', async () => {
-  const kb = new Keyboard(new DemoTransport(MODELS[1]));
-  const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
-  assert.equal(await kb.setMacroVerified(19, ev, 1), 0);
-  assert.deepEqual((await kb.getMacro(19)).events, ev);
-});
-
-// receiver that returns one reply with its last 16 bytes zeroed (lost radio block)
-class LossyReceiver extends FakeReceiver {
-  constructor(losePage) { super(); this.losePage = losePage; this.lost = 0; this.queries = []; }
-  async sendFeature(d) {
-    if (d[0] === 0x89 || d[0] === 0x8b) this.queries.push(d[2]);
-    await super.sendFeature(d);
-    if (d[0] === 0xfc && this.queries.at(-1) === this.losePage && !this.lost) {
-      this.lost++;
-      this.out = Uint8Array.from(this.out);
-      this.out.fill(0, 48, 64);
-    }
-  }
-}
-
-test('2.4 GHz receiver: a page with a lost 16-byte block is read again (keys 12-15 not "disabled")', async () => {
-  const rx = new LossyReceiver(0);
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const m = await kb.getKeyMatrix(0, Uint8Array.from(rx.kb.matrices[0]));
-  const want = rx.kb.matrices[0];
-  assert.deepEqual(Array.from(m.slice(0, want.length)), Array.from(want));
-  assert.equal(rx.lost, 1);
-  assert.equal(rx.queries.filter((p) => p === 0).length, 2, 'page 0 read twice');
-  assert.equal(rx.queries.length, 9, 'pages matching the reference are read once');
-});
-
-test('2.4 GHz receiver: keys really disabled are accepted after two identical reads', async () => {
+// Like the official app: writes are not read back, and every page is asked for once.
+test('key map, Fn layer and macro writes are not read back (like the official app)', async () => {
   const rx = new FakeReceiver();
-  rx.kb.matrices[0].fill(0, 48, 64); // the user disabled keys 12-15
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const m = await kb.getKeyMatrix(0, MODELS[1].matrix);
-  assert.ok(m.slice(48, 64).every((b) => b === 0));
-});
-
-test('2.4 GHz receiver: macro reads recover a lost block too', async () => {
-  const rx = new LossyReceiver(0);
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const ev = Array.from({ length: 12 }, (_, i) => [{ type: 'keyboard', action: 'down', value: 4 + i }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 + i }, { type: 'delay', value: 20 }]).flat();
-  await kb.setMacro(3, ev, 1);
-  rx.queries = [];
-  assert.deepEqual((await kb.getMacro(3)).events, ev);
-  assert.equal(rx.lost, 1);
-});
-
-test('2.4 GHz receiver: a stale reply (previous page\'s data) is caught by the second read', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const send = rx.sendFeature.bind(rx);
-  let last, stale = 0;
-  rx.sendFeature = async (d) => {
-    await send(d);
-    if (d[0] === 0xfc) {
-      if (rx.log.at(-3) === 0x89 && !stale && last) { stale++; rx.out = last; } // page 3 gets page 2's data once
-      else last = Uint8Array.from(rx.out);
-    }
-  };
-  const ref = Uint8Array.from(MODELS[1].matrix);
-  rx.kb.matrices[0].set([9, 0, 0, 0], 48 * 4); // F8 -> macro, so page 3 differs from the reference
-  const m = await kb.getKeyMatrix(0, ref);
-  const want = rx.kb.matrices[0];
-  assert.deepEqual(Array.from(m.slice(0, want.length)), Array.from(want));
-});
-
-test('2.4 GHz receiver: a stale cached map heals (pages that differ are confirmed)', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const badCache = Uint8Array.from(rx.kb.matrices[0]);
-  badCache.fill(0, 48, 64); // cache from a corrupted read
-  const m = await kb.getKeyMatrix(0, badCache);
-  assert.deepEqual(Array.from(m.slice(48, 64)), Array.from(rx.kb.matrices[0].slice(48, 64)));
-  assert.equal(rx.kbSends, 9, 'page 0 read twice, the rest once');
-});
-
-test('macro reads stop at the end of the macro (a short macro is 1 page, not 4)', async () => {
-  const rx = new LossyReceiver(-1); // no loss, just counts 0x8B page queries
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
   const ev = [{ type: 'keyboard', action: 'down', value: 4 }, { type: 'delay', value: 20 }, { type: 'keyboard', action: 'up', value: 4 }, { type: 'delay', value: 50 }];
-  await kb.setMacro(5, ev, 1);
-  rx.queries = [];
-  assert.deepEqual((await kb.getMacro(5)).events, ev);
-  assert.deepEqual([...new Set(rx.queries)], [0], 'only page 0 was read (twice over the receiver, to confirm it)');
-  rx.queries = [];
-  assert.deepEqual((await kb.getMacro(6)).events, [], 'an empty slot is one page too');
-  assert.deepEqual([...new Set(rx.queries)], [0]);
+  await kb.setMacro(2, ev, 1);
+  await kb.setKeyMatrix(Uint8Array.from(MODELS[1].matrix), 0);
+  await kb.setFnMatrix(new Uint8Array(512), 0);
+  const sent = rx.log.filter((c) => ![0xfb, 0xfc, 0xfd, 0xfe].includes(c));
+  assert.deepEqual([...new Set(sent)], [0x0b, 0x09, 0x10], 'only writes');
+  assert.equal(sent.length, 5 + 9 + 9);
+  assert.deepEqual((await kb.getMacro(2)).events, ev, 'stored as written');
+});
+
+test('every page is read once: key map 8, Fn layer 8, macro 4, per-key colours 6 (like the official app)', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const count = async (fn) => { const before = rx.kbSends; await fn(); return rx.kbSends - before; };
+  assert.equal(await count(() => kb.getKeyMatrix(0)), 8);
+  assert.equal(await count(() => kb.getFnMatrix(0)), 8);
+  assert.equal(await count(() => kb.getMacro(0)), 4);
+  assert.equal(await count(() => kb.getUserPicture()), 6);
 });
 
 // macOS: the first read right after a request can still return the previous reply

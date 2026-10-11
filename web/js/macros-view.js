@@ -516,7 +516,7 @@ export function createMacrosView(d) {
       await busy('Setting macro', async () => {
         await d.writeMacroToKeyboard(m, slot);
         toast(`Saved and updated on the keyboard (slot ${slot + 1})`);
-      }, 9);
+      }, 5);
     } else {
       toast('Macro saved');
     }

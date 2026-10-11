@@ -168,7 +168,12 @@
     </a>
   </footer>
 
-  <div class="busy" id="busy" hidden><div class="spinner"></div><span id="busyText">Working…</span></div>
+  <div class="busy" id="busy" hidden>
+    <div class="busy-card" role="status" aria-live="polite">
+      <div class="busy-head"><span id="busyText">Working</span><span class="busy-pct" id="busyPct"></span></div>
+      <div class="busy-track"><i id="busyBar"></i></div>
+    </div>
+  </div>
   <div class="asleep-banner" id="asleepBanner" role="alert" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="key-pop" id="keyPop" role="tooltip" hidden></div>

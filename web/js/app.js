@@ -47,19 +47,44 @@ function toast(msg, error = false) {
   toastTimer = setTimeout(() => t.classList.remove('show'), error ? Math.max(6000, msg.length * 70) : 2600);
 }
 
-async function busy(text, fn) {
-  $('#busyText').textContent = text;
+// Progress overlay: one short label for the whole operation, a bar and a
+// percentage. `steps` is how many keyboard commands the operation needs; the
+// bar follows the commands the keyboard has completed (kb.done). fn may raise
+// the estimate as it learns more: fn({ steps }) -> p.steps = n.
+async function busy(text, fn, steps = 0) {
+  const kb = S.kb;
+  const start = kb?.done ?? 0;
+  const p = { steps };
+  const label = text.replace(/…$/, '');
+  $('#busyText').textContent = label;
+  setBusyBar(steps ? 0 : null);
   $('#busy').hidden = false;
+  const timer = setInterval(() => {
+    if (p.steps && S.kb) setBusyBar(Math.min(99, ((S.kb.done ?? 0) - start) / p.steps * 100));
+  }, 120);
   try {
-    return await fn();
+    const r = await fn(p);
+    if (p.steps) setBusyBar(100);
+    return r;
   } catch (e) {
     console.error(e);
-    logNote(`error during "${text}": ${e?.message || e}`);
+    logNote(`error during "${label}": ${e?.message || e}`);
     toast(e?.message || String(e), true);
     return undefined;
   } finally {
+    clearInterval(timer);
     $('#busy').hidden = true;
   }
+}
+function setBusyBar(pct) {
+  const box = $('#busy');
+  box.classList.toggle('indeterminate', pct === null);
+  if (pct === null) {
+    $('#busyPct').textContent = '';
+    return;
+  }
+  $('#busyBar').style.width = `${pct}%`;
+  $('#busyPct').textContent = `${Math.round(pct)}%`;
 }
 
 // ------------------------------------------------------------------ state
@@ -128,7 +153,7 @@ function initConnect() {
 }
 
 async function connect(transport) {
-  await busy('Connecting…', async () => {
+  await busy('Connecting', async () => {
     try {
       await transport.open();
     } catch (e) {
@@ -166,7 +191,7 @@ async function connect(transport) {
       if (asleep) {
         busyLabel = el.textContent;
         const msg = 'Your keyboard isn’t answering. Press any key on it to continue. (On battery it stops answering once its lights go off.)';
-        el.textContent = msg;
+        el.textContent = 'Waiting for the keyboard';
         banner.replaceChildren(h('b', {}, 'Waiting for the keyboard. '), msg, h('span', { class: 'hint' }, ' If its green LED keeps blinking instead, switch it off and on.'));
         banner.hidden = false;
       } else {
@@ -187,7 +212,7 @@ async function connect(transport) {
       disconnect();
     });
     showApp();
-  });
+  }, 2);
   const kb = S.kb;
   if (!kb) {
     $('#connectLogRow').hidden = !S.logLines.length; // connect failed: offer the log
@@ -264,13 +289,13 @@ function renderProfiles() {
 async function switchProfile(p) {
   if (p === S.profile || !S.kb) return;
   if (isDirty() && !confirm('Discard unsaved key changes?')) return;
-  await busy(`Switching to profile ${p + 1}…`, async () => {
+  await busy('Switching profile', async () => {
     await S.kb.setProfile(p);
     S.profile = p;
     S.loaded.clear();
     S.selected = undefined;
     renderProfiles();
-  });
+  }, 1);
   loadTab(currentTab());
 }
 
@@ -307,10 +332,11 @@ async function loadTab(name) {
     return;
   }
   const loaders = { keys: loadKeys, lighting: loadLighting, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
-  const ok = await busy('Reading from keyboard…', async () => {
+  const [label, steps] = { lighting: ['Loading lights', 2], settings: ['Loading settings', 4] }[name] ?? ['Loading', 0];
+  const ok = await busy(label, async () => {
     await loaders[name]();
     return true;
-  });
+  }, steps);
   if (ok) S.loaded.add(name);
 }
 
@@ -433,7 +459,9 @@ async function readLayer({ force = false } = {}) {
   }
 }
 
+let keysProgressTimer;
 function setKeysLoading(state, err) {
+  clearInterval(keysProgressTimer);
   S.keysLoading = state === 'loading';
   const note = $('#keysLoading');
   note.hidden = !state;
@@ -444,7 +472,16 @@ function setKeysLoading(state, err) {
     note.replaceChildren('Key map from the copy saved in this browser. Changed keys outside Akko Cloud? ',
       h('button', { type: 'button', class: 'linkish', onclick: () => { if (!isDirty() || confirm('Discard unsaved key changes and read the layer again?')) readLayer({ force: true }).catch(() => {}); } }, 'Read it from the keyboard'));
   } else if (state === 'loading') {
-    note.replaceChildren(h('span', { class: 'spinner small' }), 'Checking your layout with the keyboard… You can already pick keys and make changes.');
+    const bar = h('i');
+    const pct = h('span', { class: 'busy-pct' }, '0%');
+    note.replaceChildren(h('b', {}, 'Loading keys'), h('span', { class: 'busy-track inline' }, bar), pct,
+      h('span', { class: 'muted small' }, 'You can already pick keys and make changes.'));
+    const start = S.kb?.done ?? 0;
+    keysProgressTimer = setInterval(() => {
+      const v = Math.min(99, (((S.kb?.done ?? 0) - start) / 8) * 100);
+      bar.style.width = `${v}%`;
+      pct.textContent = `${Math.round(v)}%`;
+    }, 120);
   } else if (state === 'error') {
     note.replaceChildren(`Couldn’t read the key map from the keyboard${err?.message ? ` (${err.message.replace(/\.$/, '')})` : ''}. Your changes are kept; writing is paused until the map has been read.`,
       h('button', { type: 'button', class: 'ghost', onclick: () => readLayer().catch(() => {}) }, 'Retry'));
@@ -705,18 +742,19 @@ function renderEditor() {
   );
 }
 
-$('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', async () => {
+$('#keysWriteBtn').addEventListener('click', () => busy('Setting keys', async (p) => {
   // Like the vendor app (setKeyConfig), every library macro this layer's keys
   // use is written before the key map, not just newly assigned ones, so the
   // keyboard's copy always matches the library. Macros that exist only on the
   // keyboard (not in the library) are left as they are.
   const used = new Set();
   for (let i = 0; i < 128; i++) if (S.work[i * 4] === 9) used.add(S.work[i * 4 + 2]);
-  for (const s of [...used].sort((a, b) => a - b)) {
+  const toWrite = [...used].sort((a, b) => a - b).filter((x) => libMacro(macroIdOnSlot(x)));
+  p.steps = toWrite.length * 9 + 17; // macro: 5 pages + 4 read back; key map: 9 + 8 read back
+  for (const s of toWrite) {
     const id = macroIdOnSlot(s);
     const m = libMacro(id);
     if (!m) continue;
-    $('#busyText').textContent = `Writing macro “${m.name}”…`;
     await writeMacroToKeyboard(m, s);
     const map = slotMap();
     for (const k of Object.keys(map)) if (map[k] === s && k !== id) delete map[k];
@@ -724,7 +762,6 @@ $('#keysWriteBtn').addEventListener('click', () => busy('Writing key map…', as
     saveSlotMap(deviceKey(), map);
     S.pendingMacros.delete(s);
   }
-  $('#busyText').textContent = 'Writing key map…';
   const target = `${S.layer}:${layerIndex()}`;
   try {
     if (S.layer === 'base') await S.kb.setKeyMatrixVerified(S.work, S.profile);
@@ -851,7 +888,7 @@ function renderLightCard(card, title, types, state, onApply) {
   card.replaceChildren(
     h('div', { class: 'card-head' }, h('h2', {}, title)),
     h('div', { class: 'form' }, h('label', { class: 'field' }, h('span', {}, 'Effect'), typeSel), area,
-      h('div', {}, h('button', { class: 'primary', onclick: () => busy(`Applying ${title.toLowerCase()}…`, async () => { await onApply({ ...draft }); toast(`${title} updated`); }) }, 'Apply'))),
+      h('div', {}, h('button', { class: 'primary', onclick: () => busy('Setting lights', async () => { await onApply({ ...draft }); toast(`${title} updated`); }, 1) }, 'Apply'))),
   );
 }
 
@@ -934,8 +971,8 @@ $('#picFillBtn').addEventListener('click', () => {
   renderPaint();
 });
 $('#picClearBtn').addEventListener('click', () => { S.pic.fill(0); renderPaint(); });
-$('#picLoadBtn').addEventListener('click', () => busy('Reading colours…', async () => { S.pic = await S.kb.getUserPicture(); renderPaint(); }));
-$('#picWriteBtn').addEventListener('click', () => busy('Writing per-key colours…', async () => {
+$('#picLoadBtn').addEventListener('click', () => busy('Loading colours', async () => { S.pic = await S.kb.getUserPicture(); renderPaint(); }, 7));
+$('#picWriteBtn').addEventListener('click', () => busy('Setting colours', async () => {
   await S.kb.setUserPicture(S.pic);
   const l = { type: 'LightUserPicture', value: S.light?.value ?? 4 };
   await S.kb.setLight(l);
@@ -943,7 +980,7 @@ $('#picWriteBtn').addEventListener('click', () => busy('Writing per-key colours�
   renderLightCard($('#mainLightCard'), 'Backlight', MAIN_LIGHT_TYPES, S.light, async (x) => { await S.kb.setLight(x); S.light = x; updateHostCard(); });
   updateHostCard();
   toast('Custom colours active');
-}));
+}, 8));
 
 // ================================================================== MACROS
 // Macros live in a library in this browser, like the vendor driver's local
@@ -963,8 +1000,8 @@ async function writeMacroToKeyboard(m, slotIndex) {
 async function syncKeyboardMacros() {
   if (!S.kb || S.macrosSynced) return;
   S.macrosSynced = true;
-  const ok = await busy('Reading macros from the keyboard…', async () => {
-    const found = await macrosView.syncFromKeyboard(slotsUsedByKeys());
+  const ok = await busy('Loading macros', async (p) => {
+    const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => (p.steps = n * 2));
     if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
     return true;
   });
@@ -1038,7 +1075,7 @@ function syncMacroModes() {
 
 // Reads a macro that is on the keyboard but not in the library, and adds it.
 async function copyMacroToLibrary(s, mode) {
-  await busy('Reading the macro from the keyboard…', async () => {
+  await busy('Loading macro', async () => {
     const got = await S.kb.getMacro(s);
     if (!got.events.length) throw new Error('That keyboard slot is empty.');
     const item = macrosView.adopt({ name: `Keyboard macro ${s + 1}`, mode, repeat: Math.max(1, got.repeatCount || 1), events: got.events });
@@ -1049,7 +1086,7 @@ async function copyMacroToLibrary(s, mode) {
     toast(`Added “${item.name}” to your macro library`);
     renderKeys();
     renderEditor();
-  });
+  }, 2);
 }
 
 // ================================================================== SETTINGS
@@ -1064,9 +1101,9 @@ async function loadSettings() {
   const debIn = h('input', { type: 'range', min: m.debounce.min, max: m.debounce.max, value: Math.min(m.debounce.max, Math.max(m.debounce.min, deb || 1)), oninput: (e) => (debVal.textContent = e.target.value) });
   const perf = h('div', { class: 'card' }, h('h2', {}, 'Performance'), h('div', { class: 'form' },
     h('label', { class: 'field' }, h('span', {}, 'Polling rate (this profile)'),
-      h('div', { class: 'inline-apply' }, rateSel, h('button', { onclick: () => busy('Setting polling rate…', async () => { await S.kb.setReportRate(Number(rateSel.value)); toast('Polling rate saved'); }) }, 'Apply'))),
+      h('div', { class: 'inline-apply' }, rateSel, h('button', { onclick: () => busy('Setting polling rate', async () => { await S.kb.setReportRate(Number(rateSel.value)); toast('Polling rate saved'); }, 1) }, 'Apply'))),
     h('label', { class: 'field' }, h('span', {}, 'Debounce: ', debVal, h('span', { class: 'muted' }, ' (1 = fastest, 10 = most stable)')),
-      h('div', { class: 'inline-apply' }, debIn, h('button', { onclick: () => busy('Setting debounce…', async () => { await S.kb.setDebounce(Number(debIn.value)); toast('Debounce saved'); }) }, 'Apply')))));
+      h('div', { class: 'inline-apply' }, debIn, h('button', { onclick: () => busy('Setting debounce', async () => { await S.kb.setDebounce(Number(debIn.value)); toast('Debounce saved'); }, 1) }, 'Apply')))));
 
   const sleepRow = (label, hint, secs, min, max) => {
     const never = h('input', { type: 'checkbox', checked: secs === 0 });
@@ -1092,11 +1129,11 @@ async function loadSettings() {
     h('p', { class: 'muted small' }, 'Both timers count from your last key press, and any key brings the keyboard back. On battery, once the lights go off the keyboard also stops answering this app over the 2.4 GHz receiver until you press a key. While it charges, the lights stay on.'),
     h('div', { class: 'sleep-group' }, h('h3', {}, '2.4 GHz receiver'), rows.rf.el, rows.deepRf.el),
     h('div', { class: 'sleep-group' }, h('h3', {}, 'Bluetooth'), rows.bt.el, rows.deepBt.el),
-    h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Saving sleep timers…', async () => {
+    h('div', { class: 'card-actions' }, h('button', { class: 'primary', onclick: () => busy('Setting power saving', async () => {
       const next = Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.get()]));
       await S.kb.setSleepTime(next);
       toast('Power saving saved');
-    }) }, 'Apply')));
+    }, 1) }, 'Apply')));
 
   // Only the switches the PC75B manual documents (Fn + Win, Fn + W). Every
   // other option bit is preserved unchanged on write: the original driver does
@@ -1106,12 +1143,12 @@ async function loadSettings() {
     ['wasdArrowSwap', 'Swap WASD and arrow keys', 'Same as Fn + W on the keyboard.'],
   ];
   const mk = ([k, label, desc]) => h('label', { class: 'switch' }, h('span', {}, label, desc ? h('span', { class: 'desc' }, desc) : null),
-    h('input', { type: 'checkbox', checked: !!S.options[k], onchange: (e) => busy('Saving option…', async () => {
+    h('input', { type: 'checkbox', checked: !!S.options[k], onchange: (e) => busy('Setting option', async () => {
       const next = { ...S.options, [k]: e.target.checked };
       await S.kb.setKeyboardOption(next);
       S.options = next;
       toast('Saved');
-    }) }));
+    }, 2) }));
   const optCard = h('div', { class: 'card' }, h('h2', {}, 'Keyboard options (this profile)'), h('div', { class: 'opt-list' }, toggles.map(mk)),
     h('p', { class: 'muted small', style: 'margin-top:12px' }, `OS mode: ${S.options.macMode ? 'Mac' : 'Windows'}. Set it with the switch on the back of the keyboard (left = Windows, right = Mac).`));
 
@@ -1119,7 +1156,7 @@ async function loadSettings() {
     h('p', { class: 'muted' }, 'Factory reset restores every profile, key map, macro and lighting setting to defaults.'),
     h('button', { class: 'danger', onclick: async () => {
       if (!confirm('Reset the keyboard to factory defaults? This cannot be undone.')) return;
-      await busy('Resetting…', async () => {
+      await busy('Resetting keyboard', async () => {
         await S.kb.factoryReset();
         forgetSavedMatrices();
         S.loaded.clear();
@@ -1127,16 +1164,17 @@ async function loadSettings() {
         toast('Keyboard reset to factory defaults');
         await loadSettings();
         S.loaded.add('settings');
-      });
+      }, 5);
     } }, 'Factory reset'),
     h('p', { class: 'muted small', style: 'margin-top:12px' }, 'Firmware updates are not supported by Akko Cloud.'));
 
-  grid.replaceChildren(perf, optCard, sleepCard, maint);
+  grid.replaceChildren(sleepCard, perf, optCard, maint); // power saving first, factory reset last
 }
 
 // ================================================================== BACKUP
-$('#exportBtn').addEventListener('click', () => busy('Reading everything from the keyboard…', async () => {
+$('#exportBtn').addEventListener('click', () => busy('Exporting backup', async (p) => {
   const kb = S.kb;
+  p.steps = (S.model.profiles + S.model.fnLayers) * 8 + 14;
   const data = { format: 'akko-web-driver/1', model: S.model.name, id: S.id, created: new Date().toISOString(), profiles: [], fn: [], macros: {} };
   const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
   const macroIdx = new Set();
@@ -1165,7 +1203,7 @@ $('#exportBtn').addEventListener('click', () => busy('Reading everything from th
   $('#backupStatus').textContent = kb.dongle
     ? `Exported ${S.model.profiles} profiles and ${S.model.fnLayers} Fn layers. Macros were skipped — they can only be read over the USB cable.`
     : `Exported ${S.model.profiles} profiles, ${S.model.fnLayers} Fn layers and ${macroIdx.size} macros.`;
-}));
+}, 1));
 
 $('#importFile').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -1181,7 +1219,8 @@ $('#importFile').addEventListener('change', async (e) => {
   }
   if (!confirm(`Restore backup from ${data.created}? This overwrites all key maps, macros and the current lighting.`)) return;
   const unhex = (s) => Uint8Array.from(s.match(/../g), (x) => parseInt(x, 16));
-  await busy('Restoring backup…', async () => {
+  await busy('Restoring backup', async (p) => {
+    p.steps = (Math.min(data.profiles.length, S.model.profiles) + Math.min(data.fn.length, S.model.fnLayers)) * 17 + Object.keys(data.macros || {}).length * 9 + 15;
     const kb = S.kb;
     forgetSavedMatrices();
     for (let p = 0; p < Math.min(data.profiles.length, S.model.profiles); p++) await kb.setKeyMatrixVerified(unhex(data.profiles[p].matrix), p);
@@ -1209,7 +1248,7 @@ $('#importFile').addEventListener('change', async (e) => {
     }
     $('#backupStatus').textContent = kb.dongle && Object.keys(data.macros || {}).length ? 'Backup restored, except macros — restore again over the USB cable to write them.' : 'Backup restored.';
     toast('Backup restored');
-  });
+  }, 1);
 });
 
 // ================================================================== SHORTCUTS

@@ -51,7 +51,14 @@ export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
 const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
 const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
-const SLOW_COMMAND_MS = 1500; // a quick reply takes ~0.4 s; longer means the keyboard is in its slow state
+const SLOW_COMMAND_MS = 1500;
+// connection first (see pace / sendDongle)
+const QUIET_MS = 150; // quiet time after every exchange before the next command
+const BURST = 8; // after this many commands in a row ...
+const BURST_REST_MS = 800; // ... rest this long
+const IDLE_RESET_MS = 2000; // a pause this long counts as rest
+const SLOW_REPLY_MS = 1000; // a reply slower than this (normal ~0.4 s) ...
+const SLOW_REST_MAX_MS = 3000; // ... is followed by a rest as long, up to this // a quick reply takes ~0.4 s; longer means the keyboard is in its slow state
 // macOS (see send / rxRequest / read): the receiver needs these small gaps
 const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before reading a reply
 const RX_SEND_GAP_MS = 10; // vendor send_feature: at least this long between requests
@@ -269,22 +276,67 @@ export class Keyboard {
     return 'timeout';
   }
 
+  // ---- connection first, speed second -------------------------------------
+  // Every pattern seen before the keyboard dropped off the receiver is avoided:
+  // commands back to back, long continuous bursts, sending after a slow reply,
+  // and re-sending while it is still busy. Costs about 2 s on a full key map.
+  async pace() {
+    const since = Date.now() - (this.lastDoneAt ?? 0);
+    if (since > IDLE_RESET_MS * this.rxPace) this.burst = 0; // it rested on its own
+    let rest = QUIET_MS - since; // quiet time after every exchange
+    if ((this.burst ?? 0) >= BURST) { // rest after a run of commands
+      rest = Math.max(rest, BURST_REST_MS - since);
+      this.burst = 0;
+    }
+    if (this.coolDown) { // rest after a slow reply
+      rest = Math.max(rest, this.coolDown - since);
+      this.coolDown = 0;
+    }
+    if (rest > 0) await this.rxPoll(rest);
+  }
+
+  // Before sending a command again, wait until the receiver reports the
+  // keyboard idle (write finished): re-sending into a busy keyboard was seen
+  // before drops. Returns false if it never becomes idle.
+  async waitIdle(timeoutMs = 3000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs * this.rxPace) {
+      const s = await this.rxStatus();
+      if (s.online && (s.writeFinish || s.readyRead)) return true;
+      await this.rxPoll(RX_POLL_MS);
+    }
+    return false;
+  }
+
   async sendDongle(data, expectReply) {
+    await this.pace();
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) {
-        this.onNote?.('no confirmation: sending the command once more');
         await this.rxPoll(1000); // back off before a single retry
+        if (!(await this.waitIdle())) {
+          this.onNote?.('not sent again: the keyboard stayed busy');
+          break;
+        }
+        this.onNote?.('no confirmation: sending the command once more');
       }
       await this.ensureAwake();
       const started = Date.now();
       await this.send(data);
       const r = await this.waitDelivered(expectReply);
+      const took = Date.now() - started;
       if (r === 'ok') {
-        if (Date.now() - started < SLOW_COMMAND_MS * this.rxPace) this.setSlow(false);
+        if (took < SLOW_COMMAND_MS * this.rxPace) this.setSlow(false);
+        // a slow reply means the keyboard is under strain: let it rest as long
+        this.coolDown = took > SLOW_REPLY_MS * this.rxPace ? Math.min(took, SLOW_REST_MAX_MS * this.rxPace) : 0;
+        this.burst = (this.burst ?? 0) + 1;
+        this.lastDoneAt = Date.now();
+        this.done = (this.done ?? 0) + 1;
         return;
       }
-      this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${Date.now() - started} ms`);
+      this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${took} ms`);
     }
+    this.lastDoneAt = Date.now();
+    this.coolDown = SLOW_REST_MAX_MS * this.rxPace;
     throw new Error('The keyboard did not confirm the command over the 2.4 GHz receiver. If its green LED is blinking it lost the receiver: switch it off and on, or use the USB cable.');
   }
 
@@ -294,6 +346,7 @@ export class Keyboard {
     await sleep(preDelay);
     if (this.dongle && !stream) return this.sendDongle(data, expectReply);
     await this.send(data);
+    if (!stream) this.done = (this.done ?? 0) + 1; // commands completed (progress bar)
   }
 
   async read(preDelay = 5) {

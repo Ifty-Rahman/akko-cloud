@@ -513,10 +513,10 @@ export function createMacrosView(d) {
     // already on the keyboard? keep it in sync
     const slot = S.kb ? slotInUse(m.id) : undefined;
     if (slot !== undefined) {
-      await busy('Updating the macro on the keyboard…', async () => {
+      await busy('Setting macro', async () => {
         await d.writeMacroToKeyboard(m, slot);
         toast(`Saved and updated on the keyboard (slot ${slot + 1})`);
-      });
+      }, 9);
     } else {
       toast('Macro saved');
     }

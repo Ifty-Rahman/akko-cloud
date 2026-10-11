@@ -514,28 +514,6 @@ test('2.4 GHz receiver: requests are spaced like the vendor, so a command is not
   assert.equal(rx.lost, 0, 'no command was overwritten');
 });
 
-test('2.4 GHz receiver (PR #3): an unconfirmed command is sent once more after 1 s', async () => {
-  const rx = new FakeReceiver();
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  const send = rx.sendFeature.bind(rx);
-  let lost = false;
-  rx.sendFeature = async (d) => {
-    if (d[0] === 0x05 && !lost) { lost = true; rx.log.push(d[0]); rx.out = Uint8Array.from([0, 66, 0, 0]); rx.busyPolls = 10000; return; } // radio lost it
-    if (d[0] === 0x05) rx.busyPolls = 0;
-    return send(d);
-  };
-  await kb.setProfile(1);
-  assert.equal(rx.log.filter((c) => c === 0x05).length, 2, 'sent twice');
-  assert.equal(rx.kbSends, 1, 'the keyboard got it the second time');
-});
-
-test('2.4 GHz receiver (PR #3): gives up after the second attempt', async () => {
-  const rx = new FakeReceiver({ stall: true });
-  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
-  await assert.rejects(kb.setProfile(1), /did not confirm/);
-  assert.equal(rx.kbSends, 2);
-});
-
 test('2.4 GHz receiver: the app is told when the keyboard answers slowly, and when it is fast again', async () => {
   const rx = new FakeReceiver();
   const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
@@ -552,4 +530,42 @@ test('2.4 GHz receiver: the app is told when the keyboard answers slowly, and wh
     globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
   }
   assert.deepEqual(events, [true, false]);
+});
+
+test('2.4 GHz receiver: a lost query is sent once more after 1 s, once the keyboard is idle', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  const send = rx.sendFeature.bind(rx);
+  let lost = false;
+  rx.sendFeature = async (d) => {
+    if (d[0] === 0x8f && !lost) { lost = true; rx.log.push(d[0]); rx.reply = false; rx.pending = 0; return; } // radio lost it; keyboard idle
+    return send(d);
+  };
+  assert.equal(await kb.getDeviceId(), 594);
+  assert.equal(rx.log.filter((c) => c === 0x8f).length, 2, 'sent twice');
+});
+
+test('2.4 GHz receiver: nothing is sent again while the keyboard stays busy', async () => {
+  const rx = new FakeReceiver({ stall: true }); // busy forever after the first command
+  const kb = new Keyboard(rx, { dongle: true, rxPace: 0.05 });
+  await assert.rejects(kb.setProfile(1), /did not confirm/);
+  assert.equal(rx.kbSends, 1, 'not re-sent into a busy keyboard');
+});
+
+test('2.4 GHz receiver: commands are spaced out, with a rest after a run of 8', async () => {
+  const rx = new FakeReceiver();
+  const kb = new Keyboard(rx, { dongle: true }); // real pacing
+  const at = [];
+  const send = rx.sendFeature.bind(rx);
+  rx.sendFeature = async (d) => { if (d[0] === 0x85) at.push(performance.now()); return send(d); };
+  globalThis.setTimeout = realSetTimeout;
+  try {
+    for (let i = 0; i < 10; i++) await kb.getProfile();
+  } finally {
+    globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, Math.min(ms ?? 0, 1), ...a);
+  }
+  // each exchange ends with its [FC] read; the next command comes >= 150 ms after that
+  const gaps = at.slice(1).map((t, i) => t - at[i]);
+  assert.ok(gaps.every((g) => g >= 150), `gaps ${gaps.map(Math.round)}`);
+  assert.ok(gaps[7] >= 800, `rest after 8 commands: ${Math.round(gaps[7])} ms`);
 });

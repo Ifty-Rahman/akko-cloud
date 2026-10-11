@@ -52,10 +52,11 @@ receiver until you press a key. The site tells you when that happens.
   keys already use are found on the keyboard automatically.
 - **Lighting:** 24 backlight effects with colour, rainbow, brightness, speed and direction, the LED
   strip, custom per-key colours, and music or screen-colour sync.
-- **Settings:** polling rate, debounce, Windows-key lock, WASD/arrow swap, and wireless power saving
-  (lights-off and sleep timers).
-- **Backup:** save everything to a file and restore it later. Factory reset.
+- **Settings:** polling rate, debounce, Windows-key lock, WASD/arrow swap, wireless power saving
+  (lights-off and sleep timers), backup and restore to a file, and factory reset.
 - **Shortcuts:** a searchable list of the keyboard's own Fn shortcuts.
+- **Debug:** an optional packet log, and a feedback form that emails the developer (with the log
+  attached if you choose).
 
 Not supported: firmware updates, Bluetooth configuration, and Akko's online community features.
 
@@ -66,8 +67,9 @@ Not supported: firmware updates, Bluetooth configuration, and Akko's online comm
 | App | Plain **HTML, CSS and JavaScript** (ES modules). No framework, no build step. |
 | Keyboard connection | **WebHID** feature reports. The protocol was reverse engineered from the official Windows and macOS apps; see [docs/PROTOCOL.md](docs/PROTOCOL.md). |
 | Music and screen sync | **Web Audio** (`AudioContext`) and **Screen Capture** (`getDisplayMedia`). |
-| Storage | The browser's **localStorage** (macro library, last-read key maps). Nothing leaves your computer. |
+| Storage | The browser's **localStorage** (macro library, last-read key maps). Nothing leaves your computer unless you send feedback. |
 | Hosting | **Cloudflare Pages**, serving the static `web/` folder, with security headers in `web/_headers`. |
+| Feedback | A **Pages Function** (`functions/api/feedback.js`) that emails it through **Resend**. Needs the `RESEND_API_KEY` secret and a `FEEDBACK_TO` variable in the Pages project settings. |
 | Tests | **Node.js** built-in test runner (`npm test`), run on every push by **GitHub Actions**. |
 
 ---

@@ -125,7 +125,7 @@ const S = {
   pic: new Uint8Array(384),
   pendingMacros: new Map(), // keyboard slot -> library macro id, written with the key map
   loaded: new Set(),
-  logging: true, // on by default for now (connect drops); can be switched off in the Debug tab
+  logging: false, // the user turns recording on in the Debug tab
   logLines: [],
   music: undefined,
   screen: undefined,
@@ -194,18 +194,9 @@ async function connect(transport) {
     // lights: a PC75B Plus+ went offline ~1 min after the last key press with a
     // 1 min timer, and not at all while charging), or after a radio hiccup. A
     // key press brings it back. Say so for as long as it lasts.
-    // A slow keyboard (power-saving state) speeds up after a key press: say so
-    // while it lasts. The "not answering" message below takes precedence.
-    let asleepNow = false;
-    kb.onSlow = (slow) => {
-      logNote(slow ? 'keyboard answering slowly' : 'keyboard answering at full speed');
-      if (asleepNow) return;
-      const banner = $('#asleepBanner');
-      banner.replaceChildren(h('b', {}, 'Your keyboard is answering slowly. '), 'Press any key on it (Shift is fine) to wake it up and speed this up.');
-      banner.hidden = !slow;
-    };
+    // A slow keyboard is only noted in the log (no popup).
+    kb.onSlow = (slow) => logNote(slow ? 'keyboard answering slowly' : 'keyboard answering at full speed');
     kb.onAsleep = (asleep) => {
-      asleepNow = asleep;
       const el = $('#busyText');
       const banner = $('#asleepBanner');
       logNote(asleep ? 'keyboard not answering (waiting for a key press)' : 'keyboard answering again');
@@ -217,8 +208,7 @@ async function connect(transport) {
         banner.hidden = false;
       } else {
         if (busyLabel) el.textContent = busyLabel;
-        banner.hidden = !kb.slow;
-        if (kb.slow) banner.replaceChildren(h('b', {}, 'Your keyboard is answering slowly. '), 'Press any key on it (Shift is fine) to wake it up and speed this up.');
+        banner.hidden = true;
       }
     };
     const id = await kb.getDeviceId();
@@ -369,7 +359,7 @@ async function loadTab(name) {
     try { await loadKeys(); } catch (e) { S.loaded.delete('keys'); toast(e?.message || String(e), true); }
     return;
   }
-  const loaders = { keys: loadKeys, lighting: loadLighting, settings: loadSettings, keybindings: async () => renderKeybindings(), backup: async () => {}, log: async () => renderLog() };
+  const loaders = { keys: loadKeys, lighting: loadLighting, settings: loadSettings, keybindings: async () => renderKeybindings(), log: async () => renderLog() };
   const [label, steps] = { lighting: ['Loading lights', 2], settings: ['Loading settings', 4] }[name] ?? ['Loading', 0];
   const ok = await busy(label, async () => {
     await loaders[name]();
@@ -1197,7 +1187,7 @@ async function loadSettings() {
     h('p', { class: 'muted small', style: 'margin-top:12px' }, `OS mode: ${S.options.macMode ? 'Mac' : 'Windows'}. Set it with the switch on the back of the keyboard (left = Windows, right = Mac).`));
 
   const maint = h('section', { class: 'settings-section maint' }, h('h2', {}, 'Maintenance'),
-    h('p', { class: 'muted' }, 'Factory reset restores every profile, key map, macro and lighting setting to defaults.'),
+    h('div', { class: 'maint-row' }, h('p', { class: 'muted small' }, 'Factory reset restores every profile, key map, macro and lighting setting to defaults. Firmware updates are not supported by Akko Cloud.'),
     h('button', { class: 'danger', onclick: async () => {
       if (!confirm('Reset the keyboard to factory defaults? This cannot be undone.')) return;
       await busy('Resetting keyboard', async () => {
@@ -1209,11 +1199,10 @@ async function loadSettings() {
         await loadSettings();
         S.loaded.add('settings');
       }, 5);
-    } }, 'Factory reset'),
-    h('p', { class: 'muted small', style: 'margin-top:12px' }, 'Firmware updates are not supported by Akko Cloud.'));
+    } }, 'Factory reset')));
 
   // two halves: power saving on the left, everything else in one card on the right (factory reset last)
-  grid.replaceChildren(sleepCard, h('div', { class: 'card settings-main' }, perf, optCard, maint));
+  grid.replaceChildren(sleepCard, h('div', { class: 'card settings-main' }, perf, optCard, $('#backupSection'), maint));
 }
 
 // ================================================================== BACKUP
@@ -1298,6 +1287,7 @@ $('#importFile').addEventListener('change', async (e) => {
     }
     $('#backupStatus').textContent = kb.dongle && Object.keys(data.macros || {}).length ? 'Backup restored, except macros — restore again over the USB cable to write them.' : 'Backup restored.';
     toast('Backup restored');
+    if (currentTab() === 'settings') setTimeout(() => loadTab('settings')); // show the restored settings
   }, 1);
 });
 
@@ -1360,6 +1350,7 @@ function renderLog() {
   const out = $('#logOut');
   out.textContent = S.logLines.slice(-400).join('\n') || (S.logging ? 'Recording… waiting for traffic.' : 'Turn on “Record packets” to start recording.');
   out.scrollTop = out.scrollHeight;
+  updateFeedbackAttach();
 }
 $('#logToggle').addEventListener('change', (e) => {
   if (!e.target.checked) logNote('recording stopped');
@@ -1368,14 +1359,17 @@ $('#logToggle').addEventListener('change', (e) => {
   renderLog();
 });
 $('#logClearBtn').addEventListener('click', () => { S.logLines = []; renderLog(); });
-function downloadLog() {
+function logText() {
   const head = [
     `Akko Cloud debug log, ${new Date().toISOString()}`,
     `Keyboard: ${S.kb ? `${modelName()} (id ${S.id & 0x7fffffff}), firmware ${S.fw ?? '?'}, ${S.transport?.dongle ? '2.4 GHz receiver' : S.transport?.kind}` : 'not connected'}`,
     `Browser: ${navigator.userAgent}`,
     '',
   ];
-  const a = h('a', { href: URL.createObjectURL(new Blob([[...head, ...S.logLines].join('\n')], { type: 'text/plain' })), download: `akko-cloud-log-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.txt` });
+  return [...head, ...S.logLines].join('\n');
+}
+function downloadLog() {
+  const a = h('a', { href: URL.createObjectURL(new Blob([logText()], { type: 'text/plain' })), download: `akko-cloud-log-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.txt` });
   document.body.append(a);
   a.click();
   a.remove();
@@ -1383,6 +1377,42 @@ function downloadLog() {
 $('#logDownloadBtn').addEventListener('click', downloadLog);
 // the Debug tab only exists once connected, so a failed connect offers the log here
 $('#connectLogBtn').addEventListener('click', downloadLog);
+
+// ---- feedback: emailed to the developer by the site's /api/feedback function
+function updateFeedbackAttach() {
+  const has = S.logLines.length > 0;
+  const box = $('#fbAttach');
+  box.disabled = !has;
+  if (!has) box.checked = false;
+  $('#fbAttachHint').textContent = has ? `${S.logLines.length} lines recorded so far` : 'Nothing recorded yet: turn on Record packets and reproduce the problem first.';
+}
+$('#feedbackForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const subject = $('#fbSubject').value.trim();
+  const message = $('#fbBody').value.trim();
+  const status = $('#fbStatus');
+  const say = (text, cls = '') => { status.textContent = text; status.className = `muted small ${cls}`; };
+  if (!subject || !message) return say('Please fill in a subject and a message.', 'err');
+  const btn = $('#fbSend');
+  btn.disabled = true;
+  say('Sending…');
+  try {
+    const r = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject, message, website: $('#fbWebsite').value, log: $('#fbAttach').checked ? logText() : undefined }),
+    });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(res.error || `The server answered ${r.status}.`);
+    $('#feedbackForm').reset();
+    updateFeedbackAttach();
+    say('Thanks! Your feedback was sent.', 'ok');
+  } catch (err) {
+    say(`Couldn’t send it: ${err.message || err}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 window.addEventListener('beforeunload', (e) => {
   if (isDirty() || macrosView.isDirty()) e.preventDefault();

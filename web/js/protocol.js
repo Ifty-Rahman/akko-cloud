@@ -49,30 +49,15 @@ export const RX = {
 export const Checksum = { BIT7: 0, BIT8: 1, NONE: 2 };
 
 const RX_POLL_MS = 100; // vendor pace for [FB] status polls
+const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
+const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
+const SLOW_COMMAND_MS = 1500; // a quick reply takes ~0.4 s; longer means the keyboard is in its slow state
+// macOS (see send / rxRequest / read): the receiver needs these small gaps
 const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before reading a reply
 const RX_SEND_GAP_MS = 10; // vendor send_feature: at least this long between requests
 const RX_REREAD_MS = 15; // gap before reading a stale receiver reply again
-const RX_ASLEEP_POLL_MS = 500; // while waiting for a key press to wake the keyboard
-const OFFLINE_GRACE_MS = 1200; // ignore shorter "offline" blips
-const SETTLE_MS = 1000; // online this long after a wake before the first command
-const SETTLE_MAX_MS = 8000;
-const RX_MAX_POLLS = 15;
-const RX_SLOW_POLL_MS = 500; // after the vendor's 15 polls, keep waiting at this pace
-const RX_SLOW_POLLS = 7; // ... this many times (about 5 s in all)
-// polls a command needed (write finished + reply ready); a rested keyboard
-// needs few, a tiring one many
-const TIRED_POLLS = 4; // provisional: tuned from real-keyboard traces
-const SLOW_POLLS = 10;
-const COOL_DOWN_MS = 500;
-const COOL_DOWN_LONG_MS = 1500;
-const COOL_DOWN_MAX_MS = 5000;
-const SLOW_COMMAND_MS = 1000; // a rested keyboard answers in ~0.4 s // vendor: wait_fb_write_finish gives up after 15 polls
 
-const NOT_LINKED = 'The 2.4 GHz receiver has no keyboard paired. Switch the keyboard to 2.4 GHz (Fn + Y), or hold Fn + Y to pair it again.';
-const STILL_BUSY = 'The keyboard is still busy with the previous change. Wait a moment and try again.';
-const NOT_ANSWERED = 'The keyboard did not answer over the 2.4 GHz receiver. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
 const INCONSISTENT_REPLY = 'The keyboard’s replies over the 2.4 GHz receiver did not agree, so nothing was changed. Try again, or use the USB cable.';
-const NOT_CONFIRMED = 'The keyboard did not confirm the change over the 2.4 GHz receiver, so it may not have been saved. Try again, or use the USB cable. If its green LED is blinking, switch it off and on.';
 
 const MAXSPEED = 4;
 // Colour-mode nibble (low 4 bits of the option byte). The vendor driver uses
@@ -225,18 +210,17 @@ export class Keyboard {
   async ensureAwake(timeoutMs = 60000) {
     const t0 = Date.now();
     let s = await this.rxStatus();
-    if (s.online) return s;
     while (!s.online && Date.now() - t0 < OFFLINE_GRACE_MS * this.rxPace) {
       await this.rxPoll(RX_POLL_MS);
       s = await this.rxStatus();
     }
-    if (s.online) return this.settle(s);
+    if (s.online) return s;
     this.onAsleep?.(true);
     try {
       while (Date.now() - t0 < timeoutMs) {
         await this.rxPoll(RX_ASLEEP_POLL_MS);
         s = await this.rxStatus();
-        if (s.online) return await this.settle(s);
+        if (s.online) return s;
       }
     } finally {
       this.onAsleep?.(false);
@@ -244,24 +228,9 @@ export class Keyboard {
     throw new KeyboardAsleepError();
   }
 
-  // Right after the keyboard wakes or re-links, commands were seen to take
-  // seconds and then stall, dropping it off the receiver again. Wait until it
-  // has reported online for a moment before talking to it.
-  async settle(s) {
-    const t0 = Date.now();
-    let since = Date.now();
-    while (Date.now() - since < SETTLE_MS * this.rxPace && Date.now() - t0 < SETTLE_MAX_MS * this.rxPace) {
-      await this.rxPoll(RX_POLL_MS);
-      s = await this.rxStatus();
-      if (!s.online) since = Date.now();
-    }
-    return s;
-  }
-
   // Tells the app when the keyboard is answering slowly (or fast again).
-  // Measured on a PC75B Plus+: without recent key presses it drifts into a
-  // power-saving state (replies take seconds, sometimes it stops); right after
-  // a key press every reply came on the first poll (~0.4 s per command).
+  // Without recent key presses the keyboard drifts into a slow power-saving
+  // state; a key press on it switches it back to full speed.
   setSlow(slow) {
     if (this.slow === slow) return;
     this.slow = slow;
@@ -274,95 +243,49 @@ export class Keyboard {
     return r[0] === 0xaa && r[1] === 0x55 && r[2] === 1;
   }
 
-  // The vendor helper's wait_fb_write_finish / read_msg loops: at most
-  // RX_MAX_POLLS polls of [FB], 100 ms apart, until `ready(status)`.
-  async pollUntil(ready) {
+  // ---- query fetching as in PR #3 ("fix/receiver-link-stability") ---------
+  // send -> poll [FB] (first after 50 ms, then every 100 ms, up to 3 s) until
+  // is_write_finish (writes) or is_ready_read (queries) -> fetch with [FC].
+  // A command the keyboard did not confirm is sent once more after 1 s.
+  async waitDelivered(expectReply, timeoutMs = 3000) {
+    const t0 = Date.now();
+    let sawPending = false;
     let offlineSince = null;
-    // the vendor's 15 polls 100 ms apart, then a few slower ones (~5 s in all).
-    // Waiting sends nothing to the keyboard, so it is always safe: the first
-    // replies after a restart or wake were seen to take over 1.5 s.
-    // polls made while the keyboard is offline don't use up the budget; the
-    // offline time itself is bounded by the grace period and ensureAwake
-    for (let i = 0; i < RX_MAX_POLLS + RX_SLOW_POLLS; i++) {
-      // past the vendor's 15 quick polls (~1.5 s) the keyboard is in its slow,
-      // power-saving state; a key press on it switches it back to full speed
-      if (i === RX_MAX_POLLS) this.setSlow(true);
-      await this.rxPoll(i < RX_MAX_POLLS ? RX_POLL_MS : RX_SLOW_POLL_MS);
-      let s = await this.rxStatus();
+    await this.rxPoll(50);
+    while (Date.now() - t0 < timeoutMs * this.rxPace) {
+      const s = await this.rxStatus();
       if (!s.online) {
         offlineSince ??= Date.now();
-        i--; // offline polls are not counted against the reply budget
-        if (Date.now() - offlineSince < OFFLINE_GRACE_MS * this.rxPace) continue;
-        // A tired keyboard can go quiet mid-exchange and come back by itself a
-        // few seconds later (or after a key press). Waiting sends nothing, so
-        // wait for it (ensureAwake shows the "press any key" banner meanwhile)
-        // and then keep waiting for the reply instead of failing.
-        this.onNote?.('keyboard went quiet mid-exchange; waiting for it');
-        try {
-          s = await this.ensureAwake();
-        } catch {
-          return 'offline';
-        }
+        if (Date.now() - offlineSince >= OFFLINE_GRACE_MS * this.rxPace) return 'offline';
+      } else {
         offlineSince = null;
+        const done = expectReply ? s.readyRead : s.writeFinish;
+        if (!done) sawPending = true;
+        else if (sawPending || Date.now() - t0 > 150 * this.rxPace) return 'ok';
       }
-      offlineSince = null;
-      if (ready(s)) {
-        this.lastPolls = (this.lastPolls ?? 0) + i + 1;
-        return 'ok';
-      }
+      if (Date.now() - t0 > SLOW_COMMAND_MS * this.rxPace) this.setSlow(true);
+      await this.rxPoll(RX_POLL_MS);
     }
-    this.lastPolls = (this.lastPolls ?? 0) + RX_MAX_POLLS + RX_SLOW_POLLS;
     return 'timeout';
   }
 
-  // One command over the receiver, exactly in the vendor helper's order.
-  //   send_msg:  [FD], wait until the previous exchange finished (is_write_finish),
-  //              send, [FD], wait for is_write_finish.
-  //   read_msg (queries only): [FD], wait for is_ready_read, then fetch ([FC]).
-  // Like the vendor, a command is never sent twice, and nothing is sent while
-  // the keyboard has not finished the previous exchange: piling commands onto
-  // a busy keyboard was what made it drop off the receiver (green LED blinking).
   async sendDongle(data, expectReply) {
-    // Sustained traffic tires the keyboard: replies take longer and longer
-    // until it drops off the receiver. Rest restores it (on a PC75B Plus+:
-    // full loads 10 s apart slowed 0.36 -> 0.76 s per command; 60 s apart they
-    // stayed at 0.36 s). So when a command was slow, give it a break first.
-    if (this.coolDown) {
-      this.onNote?.(`resting ${this.coolDown} ms (the keyboard answered slowly)`);
-      await this.rxPoll(this.coolDown);
-      this.coolDown = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) {
+        this.onNote?.('no confirmation: sending the command once more');
+        await this.rxPoll(1000); // back off before a single retry
+      }
+      await this.ensureAwake();
+      const started = Date.now();
+      await this.send(data);
+      const r = await this.waitDelivered(expectReply);
+      if (r === 'ok') {
+        if (Date.now() - started < SLOW_COMMAND_MS * this.rxPace) this.setSlow(false);
+        return;
+      }
+      this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${Date.now() - started} ms`);
     }
-    // timed after the rest: counting the rest as a slow reply made every rest
-    // trigger the next one (5 s after every command)
-    const started = Date.now();
-    this.lastPolls = 0;
-    await this.rxPoll(RX_POLL_MS); // wait_fb_write_finish starts with a 100 ms sleep
-    const s = await this.ensureAwake();
-    if (!(await this.rxLinked())) throw new Error(NOT_LINKED);
-    if (!s.writeFinish) {
-      const r = await this.pollUntil((x) => x.writeFinish);
-      if (r !== 'ok') this.onNote?.(`not sent: previous exchange never finished (${r})`);
-      if (r === 'offline') throw new KeyboardAsleepError();
-      if (r !== 'ok') throw new Error(STILL_BUSY);
-    }
-    this.lastPolls = 0;
-    await this.send(data);
-    await this.rxLinked();
-    let r = await this.pollUntil((x) => x.writeFinish);
-    if (r === 'ok' && expectReply) {
-      await sleep(10);
-      await this.rxLinked();
-      r = await this.pollUntil((x) => x.readyRead);
-    }
-    // the more slowly the keyboard answered, the longer it rests
-    const took = (Date.now() - started) / this.rxPace;
-    this.coolDown = r !== 'ok' ? COOL_DOWN_MAX_MS
-      : took > SLOW_COMMAND_MS ? Math.min(COOL_DOWN_MAX_MS, Math.max(COOL_DOWN_LONG_MS, 2 * took))
-        : this.lastPolls > SLOW_POLLS ? COOL_DOWN_LONG_MS : this.lastPolls > TIRED_POLLS ? COOL_DOWN_MS : 0;
-    if (r === 'ok' && took < SLOW_COMMAND_MS) this.setSlow(false);
-    if (r !== 'ok') this.onNote?.(`no ${expectReply ? 'reply' : 'confirmation'} (${r}) after ${Date.now() - started} ms`);
-    if (r === 'offline') throw new KeyboardAsleepError();
-    if (r !== 'ok') throw new Error(expectReply ? NOT_ANSWERED : NOT_CONFIRMED);
+    throw new Error('The keyboard did not confirm the command over the 2.4 GHz receiver. If its green LED is blinking it lost the receiver: switch it off and on, or use the USB cable.');
   }
 
   // stream=true: fire-and-forget frames (music/screen), no link handshake.
@@ -374,16 +297,11 @@ export class Keyboard {
   }
 
   async read(preDelay = 5) {
-    if (this.dongle) {
-      // vendor read_msg: 10 ms, fetch ([FC]), then 30 ms before reading the
-      // reply. Reading straight after the fetch can catch the receiver's
-      // buffer half-updated (seen as zeroed blocks or another page's data).
-      await sleep(10);
-      await this.rawSend([RX.FETCH]);
-      await sleep(30);
-      return this.rawRecv();
-    }
     await sleep(preDelay);
+    if (this.dongle) {
+      await this.rawSend([RX.FETCH]); // ask the receiver for the keyboard's reply
+      await this.rxPoll(RX_REPLY_DELAY_MS); // macOS: the receiver needs a moment (vendor get_feature)
+    }
     return this.rawRecv();
   }
 

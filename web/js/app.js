@@ -179,7 +179,7 @@ async function connect(transport) {
     const profile = await kb.getProfile().catch(() => 0);
     Object.assign(S, {
       kb, transport, id, fw: undefined, profile, model: findModel(id), layer: 'base', selected: undefined,
-      loaded: new Set(), pendingMacros: new Map(), initialLoading: true,
+      loaded: new Set(), pendingMacros: new Map(), macrosSynced: false,
     });
     kb.colourCodes = S.model.colourCodes ?? VENDOR_COLOUR_CODES;
     transport.onDisconnect(() => {
@@ -188,81 +188,21 @@ async function connect(transport) {
     });
     showApp();
   });
-  if (S.kb) await initialLoad();
-  else $('#connectLogRow').hidden = !S.logLines.length; // connect failed: offer the log
-}
-
-// ---- loading screen ------------------------------------------------------
-// Like the vendor app, everything the tabs need is read once behind a loading
-// screen, so switching tabs afterwards sends nothing to the keyboard. Over the
-// 2.4 GHz receiver long bursts of traffic can make the keyboard drop off, so
-// the load is kept small: the current profile's key map, only the macros its
-// keys use (and only those not already in the library), lighting and settings.
-async function initialLoad() {
   const kb = S.kb;
-  const steps = [
-    { label: 'Keyboard info', run: async () => {
-      // the firmware only changes with an update, so it is read once per keyboard
-      const fwKey = `akko-fw:${S.id & 0x7fffffff}`;
-      try { S.fw = JSON.parse(localStorage.getItem(fwKey) ?? 'null') ?? undefined; } catch { S.fw = undefined; }
-      if (S.fw === undefined) {
-        S.fw = await kb.getFirmwareVersion().catch(() => undefined);
-        try { if (S.fw !== undefined) localStorage.setItem(fwKey, JSON.stringify(S.fw)); } catch { /* ignore */ }
-      }
-      if (S.transport.dongle) await kb.getLinkStatus().catch(() => undefined);
-      renderDeviceStrip();
-    } },
-    { label: 'Key map', run: async () => { await loadKeys(); S.loaded.add('keys'); } },
-    { label: 'Macros', run: async (sub) => {
-      const found = await macrosView.syncFromKeyboard(slotsUsedByKeys(), (i, n) => sub(`${i + 1} of ${n}`));
-      if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
-    } },
-    { label: 'Lighting', run: async () => { await loadLighting(); S.loaded.add('lighting'); } },
-    { label: 'Settings', run: async () => { await loadSettings(); S.loaded.add('settings'); } },
-  ];
-  const box = $('#loader');
-  const list = $('#loaderSteps');
-  const err = $('#loaderError');
-  $('#loaderHint').textContent = 'Please wait till it finishes.';
-  list.replaceChildren(...steps.map((st) => (st.el = h('li', {}, h('span', { class: 'mark' }), h('span', {}, st.label), h('span', { class: 'sub' })))));
-  const setState = (i, state, mark = '') => {
-    steps[i].el.className = state;
-    steps[i].el.querySelector('.mark').textContent = mark;
-    $('#loaderBar').style.width = `${(steps.filter((x) => x.el.className === 'done').length / steps.length) * 100}%`;
-  };
-  err.hidden = true;
-  box.hidden = false;
-  let i = 0;
-  while (i < steps.length) {
-    if (S.kb !== kb) break; // disconnected
-    setState(i, 'active');
-    logNote(`loading: ${steps[i].label}`);
-    try {
-      await steps[i].run((text) => (steps[i].el.querySelector('.sub').textContent = text));
-      steps[i].el.querySelector('.sub').textContent = '';
-      setState(i, 'done', '✓');
-      i++;
-    } catch (e) {
-      if (S.kb !== kb) break;
-      logNote(`loading: ${steps[i].label} FAILED: ${e?.message || e}`);
-      setState(i, 'failed', '!');
-      const choice = await new Promise((resolve) => {
-        err.replaceChildren(
-          h('div', {}, `${steps[i].label} could not be read: ${e?.message || e}`),
-          h('div', { class: 'row' },
-            h('button', { class: 'primary', onclick: () => resolve('retry') }, 'Try again'),
-            h('button', { class: 'ghost', onclick: () => resolve('skip') }, 'Continue anyway'),
-            h('button', { type: 'button', class: 'linkish', onclick: downloadLog }, 'Download debug log')));
-        err.hidden = false;
-      });
-      err.hidden = true;
-      if (choice === 'skip') break; // the remaining tabs load when they are opened
-    }
+  if (!kb) {
+    $('#connectLogRow').hidden = !S.logLines.length; // connect failed: offer the log
+    return;
   }
-  box.hidden = true;
-  if (!kb.slow) $('#asleepBanner').hidden = true;
-  S.initialLoading = false;
-  if (S.kb === kb) selectTab(currentTab());
+  // Each tab reads what it needs when it is opened (as in PR #3). Firmware and
+  // battery come in the background, queued behind the key map.
+  const fwKey = `akko-fw:${S.id & 0x7fffffff}`;
+  try { S.fw = JSON.parse(localStorage.getItem(fwKey) ?? 'null') ?? undefined; } catch { S.fw = undefined; }
+  if (S.fw === undefined) {
+    S.fw = await kb.getFirmwareVersion().catch(() => undefined);
+    try { if (S.fw !== undefined) localStorage.setItem(fwKey, JSON.stringify(S.fw)); } catch { /* ignore */ }
+  }
+  if (S.transport?.dongle) await kb.getLinkStatus().catch(() => undefined);
+  if (S.kb === kb) renderDeviceStrip();
 }
 
 // Name from the model id the keyboard reports (Akko's own id → name table),
@@ -286,7 +226,6 @@ function renderDeviceStrip() {
 }
 
 async function disconnect() {
-  $('#loader').hidden = true;
   $('#connectLogRow').hidden = !S.logLines.length;
   S.music?.stop();
   S.screen?.stop();
@@ -344,7 +283,8 @@ function selectTab(name) {
   if (name !== 'macros') macrosView.stop();
   if (name === 'log') renderLog(); // always show the latest packets
   if (name === 'macros') {
-    macrosView.render(); // the library is local: nothing to read from the keyboard
+    macrosView.render(); // the library is local
+    syncKeyboardMacros(); // reads only macros keys use that are not in the library yet
     return;
   }
   if (name === 'keys' && S.loaded.has('keys') && !S.keysLoading) {
@@ -355,7 +295,7 @@ function selectTab(name) {
   loadTab(name);
 }
 async function loadTab(name) {
-  if (!S.kb || S.initialLoading) return;
+  if (!S.kb) return;
   if (S.loaded.has(name)) return;
   if (name === 'keys') {
     // non-blocking: the layout is drawn at once and filled in when the read finishes
@@ -1014,6 +954,20 @@ async function writeMacroToKeyboard(m, slotIndex) {
   const err = validateMacro(m.events);
   if (err) throw new Error(`“${m.name}”: ${err}`);
   await S.kb.setMacroVerified(slotIndex, finalizeMacro(m.events), m.mode === 'repeat_times' ? Math.max(1, m.repeat || 1) : 1);
+}
+
+// Once per connection, when the Macros tab is opened: macros that keys use but
+// that are not in this browser's library are read from the keyboard.
+async function syncKeyboardMacros() {
+  if (!S.kb || S.macrosSynced) return;
+  S.macrosSynced = true;
+  const ok = await busy('Reading macros from the keyboard…', async () => {
+    const found = await macrosView.syncFromKeyboard(slotsUsedByKeys());
+    if (found) toast(`Added ${found} macro${found === 1 ? '' : 's'} from the keyboard to your library`);
+    return true;
+  });
+  if (!ok) S.macrosSynced = false; // try again next time the tab is opened
+  if (currentTab() === 'macros') macrosView.render();
 }
 
 // Play mode of a keyboard slot, from a key that uses it in the current layer.

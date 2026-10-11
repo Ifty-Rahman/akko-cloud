@@ -357,22 +357,6 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 7px; border: 1px sol
 .asleep-banner .hint { color: var(--muted); }
 .asleep-banner:not([hidden]) + .toast { bottom: 130px; }
 
-.loader { position: fixed; inset: 0; z-index: 52; display: flex; align-items: center; justify-content: center; padding: 16px;
-  background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(6px); }
-.loader-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 22px; }
-.loader-card h2 { margin-bottom: 4px; }
-.loader-steps { list-style: none; margin: 14px 0; padding: 0; display: grid; gap: 8px; }
-.loader-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); }
-.loader-steps li .mark { width: 18px; height: 18px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid var(--line); font-size: 11px; font-weight: 700; }
-.loader-steps li.active { color: var(--text); font-weight: 600; }
-.loader-steps li.active .mark { border-color: var(--line); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
-.loader-steps li.done .mark { background: var(--ok); border-color: var(--ok); color: #fff; }
-.loader-steps li.failed { color: var(--danger); }
-.loader-steps li.failed .mark { background: var(--danger); border-color: var(--danger); color: #fff; }
-.loader-steps li .sub { color: var(--muted); font-weight: 400; font-size: 0.85rem; margin-left: auto; }
-.loader .usage i { transition: width 0.3s; }
-.loader-error { margin-top: 14px; color: var(--danger); font-size: 0.9rem; }
-.loader-error .row { margin-top: 10px; }
 
 button.linkish { background: none; border: none; padding: 0; min-height: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
 button.linkish:hover { filter: brightness(1.15); }

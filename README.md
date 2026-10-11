@@ -65,7 +65,7 @@ Not supported as of now: firmware updates (Don't think it will get any), Bluetoo
 | Music and screen sync | **Web Audio** (`AudioContext`) and **Screen Capture** (`getDisplayMedia`). |
 | Storage | The browser's **localStorage** (macro library, last-read key maps). Nothing leaves your computer unless you send feedback. |
 | Hosting | **Cloudflare Pages**, serving the static `web/` folder, with security headers in `web/_headers`. |
-| Feedback | A **Pages Function** (`functions/api/feedback.js`) that emails it through **Resend**. Needs the `RESEND_API_KEY` secret and a `FEEDBACK_TO` variable in the Pages project settings. |
+| Feedback | A **Pages Function** that emails it through **Resend**. |
 | Tests | **Node.js** built-in test runner (`npm test`), run on every push by **GitHub Actions**. |
 
 ---

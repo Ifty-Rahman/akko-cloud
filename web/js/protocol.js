@@ -55,6 +55,7 @@ const RX_MAX_POLLS = 15; // the helper's wait_fb_write_finish / read_msg give up
 const RX_EXTRA_POLLS = 8; // then a slow keyboard gets ~4 s more (only waiting, nothing is sent)
 const RX_EXTRA_POLL_MS = 500;
 const RX_LOOP_MS = 5000; // the helper's background status loop
+const SELF_RECOVER_MS = 10000; // a keyboard that went quiet often comes back by itself: wait this long before asking for a key press
 const KEEP_ALIVE_MS = 30000; // optional keep-alive query (Settings); lights-off can be as short as 1 min
 // macOS (see send / rxRequest / read): the receiver needs these small gaps
 const RX_REPLY_DELAY_MS = 10; // vendor get_feature: wait this long before reading a reply
@@ -227,7 +228,7 @@ export class Keyboard {
     const t0 = Date.now();
     let s = await this.rxStatus();
     while (!s.online && Date.now() - t0 < graceMs * this.rxPace) {
-      await this.rxPoll(RX_POLL_MS);
+      await this.rxPoll(graceMs > OFFLINE_GRACE_MS ? 250 : RX_POLL_MS);
       s = await this.rxStatus();
     }
     if (s.online) return s;
@@ -284,7 +285,9 @@ export class Keyboard {
         offlineSince ??= Date.now();
         i--; // offline polls don't use up the budget
         if (Date.now() - offlineSince < OFFLINE_GRACE_MS * this.rxPace) continue;
-        s = await this.ensureAwake(60000, 0); // throws KeyboardAsleepError after a minute
+        // the keyboard often comes back by itself (seen after 2.4 s, with the
+        // reply waiting): wait quietly before asking for a key press
+        s = await this.ensureAwake(60000, SELF_RECOVER_MS); // throws KeyboardAsleepError after a minute
       }
       offlineSince = null;
       if (ready(s)) {
@@ -750,6 +753,11 @@ export class Keyboard {
   // Like the official app (_getKeyMatrix, _getFnKeyMatrix, getMacro,
   // _getLightPic): each page is asked for once. The receiver sequence waits
   // 30 ms before reading a fetched reply, which is what keeps replies whole.
+  // Pages back to back, like the official app. Pauses hurt: across the
+  // day's debug logs, commands sent within 0.3 s of the previous exchange
+  // dropped the keyboard 1% of the time, commands after 3-10 s of quiet 25%
+  // (the receiver can only hand a command over when the keyboard checks in,
+  // and an idle keyboard checks in less and less often).
   async readPaged(cmd, index, pages) {
     const out = new Uint8Array(pages * 64);
     for (let p = 0; p < pages; p++) out.set(await this.query([cmd, index, p]), p * 64);

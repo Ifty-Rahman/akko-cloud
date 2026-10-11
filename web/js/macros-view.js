@@ -192,7 +192,10 @@ export function createMacrosView(d) {
   async function syncFromKeyboard(slots, onProgress) {
     const kb = S.kb;
     const map = loadSlotMap(deviceId());
-    const known = new Set(Object.values(map)); // in the library (or deliberately removed)
+    // a slot counts as known only while its library macro still exists; one
+    // whose macro was deleted from the library is read again from the keyboard
+    const inLibrary = new Set(V.lib.macros.map((m) => m.id));
+    const known = new Set(Object.entries(map).filter(([id]) => inLibrary.has(id)).map(([, slot]) => slot));
     const todo = [...slots].filter((x) => !known.has(x)).sort((a, b) => a - b);
     let found = 0;
     for (const [i, slotIdx] of todo.entries()) {
@@ -202,6 +205,7 @@ export function createMacrosView(d) {
       if (!got.events.length) continue;
       const item = adoptItem({ mode: d.modeForSlot?.(slotIdx) ?? 'repeat_times', repeat: Math.max(1, got.repeatCount || 1), events: got.events });
       const fresh = loadSlotMap(deviceId());
+      for (const id of Object.keys(fresh)) if (fresh[id] === slotIdx) delete fresh[id]; // stale entries
       fresh[item.id] = slotIdx;
       saveSlotMap(deviceId(), fresh);
       found++;

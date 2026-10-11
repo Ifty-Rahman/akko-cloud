@@ -266,7 +266,7 @@ function startKeepAlive(kb) {
     } catch (e) {
       logNote(`background check failed: ${e?.message || e}`);
     }
-  }, 5000);
+  }, 1000); // rxBackgroundStatus itself waits until 5 s have passed, like the official loop
 }
 
 // Name from the model id the keyboard reports (Akko's own id → name table),

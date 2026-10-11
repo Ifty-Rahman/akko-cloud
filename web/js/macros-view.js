@@ -174,8 +174,10 @@ export function createMacrosView(d) {
   }
 
   // add a macro read from the keyboard to the library
+  // Macros found on the keyboard are named like new ones (Macro_1, Macro_2, …).
   function adoptItem(m) {
-    const name = V.lib.macros.some((x) => x.name === m.name) ? uniqueName(V.lib.macros.map((x) => x.name), m.name) : m.name;
+    const names = V.lib.macros.map((x) => x.name);
+    const name = m.name === undefined ? nextName(names, 'Macro') : names.includes(m.name) ? uniqueName(names, m.name) : m.name;
     const item = { id: newId(), name, folderId: null, mode: m.mode, repeat: m.repeat, events: m.events, updated: 0 };
     V.lib.macros.push(item);
     persist();
@@ -198,7 +200,7 @@ export function createMacrosView(d) {
       onProgress?.(i, todo.length);
       const got = await kb.getMacro(slotIdx);
       if (!got.events.length) continue;
-      const item = adoptItem({ name: `Keyboard macro ${slotIdx + 1}`, mode: d.modeForSlot?.(slotIdx) ?? 'repeat_times', repeat: Math.max(1, got.repeatCount || 1), events: got.events });
+      const item = adoptItem({ mode: d.modeForSlot?.(slotIdx) ?? 'repeat_times', repeat: Math.max(1, got.repeatCount || 1), events: got.events });
       const fresh = loadSlotMap(deviceId());
       fresh[item.id] = slotIdx;
       saveSlotMap(deviceId(), fresh);
